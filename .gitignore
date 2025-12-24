@@ -1,0 +1,30 @@
+
+# --------- Data / outputs ----------
+test_maps/
+*.tif
+*.nc
+*.nc4
+*.h5
+*.hdf5
+*.tar
+*.tar.gz
+
+# --------- Python ----------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.ipynb_checkpoints/
+
+# --------- IDE ----------
+.vscode/
+*.code-workspace
+
+# --------- OS ----------
+.DS_Store
+
+# --------- Logs ----------
+*.log
+logs/
+
+*.egg-info/

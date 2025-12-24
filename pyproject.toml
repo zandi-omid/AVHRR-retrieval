@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "AVHRR_retrieval"
+version = "0.1.0"
+description = "A modular pipeline for reading, gridding, and collocating AVHRR satellite orbits."
+authors = [
+    { name = "Omid Zandi", email = "omidzandi@arizona.edu" }
+]
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "numpy",
+    "pandas",
+    "netCDF4",
+    "xarray",
+    "h5py",
+    "rasterio",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools]
+packages = ["AVHRR_collocation_pipeline"]
+
+[tool.setuptools.package-data]
+AVHRR_collocation_pipeline = ["**/*.py"]
