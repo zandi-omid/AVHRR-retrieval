@@ -24,7 +24,6 @@ from AVHRR_collocation_pipeline.readers.AutoSnow_reader import (
     collocate_AutoSnow,
 )
 
-# ---------------- MERRA2 ----------------
 from AVHRR_collocation_pipeline.readers.MERRA2_reference import (
     load_MERRA2_reference,
 )
@@ -32,7 +31,6 @@ from AVHRR_collocation_pipeline.readers.MERRA2_reader import (
     collocate_MERRA2,
 )
 
-# ------------------ add this import near the top ------------------
 from AVHRR_collocation_pipeline.reproject import reproject_vars_wgs_to_polar
 
 import AVHRR_collocation_pipeline.utils as utils
