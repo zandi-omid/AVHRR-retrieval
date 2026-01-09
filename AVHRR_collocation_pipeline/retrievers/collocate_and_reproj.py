@@ -248,6 +248,9 @@ class AVHRRProcessor:
         # 3) Grid required DL inputs
         var_grids = self.build_var_grids(df, x_vec, y_vec, input_vars)
 
+        # extract TB11 WGS grid
+        tb11_wgs = var_grids["temp_11_0um_nom"].astype("float32")
+
         # np.savez("/xdisk/behrangi/omidzandi/retrieved_maps/test/2010_new_var_grids_debug.npz", **var_grids)
 
         # 4) Reproject to polar (still returns the dict)
@@ -267,4 +270,4 @@ class AVHRRProcessor:
         ds_sh = self._polar_to_dataset(polar, "SH")
 
         # You can return a dict or a tuple; I'll use a dict:
-        return {"NH": ds_nh, "SH": ds_sh}
+        return {"NH": ds_nh, "SH": ds_sh}, tb11_wgs, x_vec, y_vec

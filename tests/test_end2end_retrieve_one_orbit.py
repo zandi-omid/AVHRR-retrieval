@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import torch
@@ -10,8 +9,6 @@ from AVHRR_collocation_pipeline.readers.MERRA2_reference import load_MERRA2_refe
 
 from AVHRR_collocation_pipeline.retrievers.collocate_and_reproj import AVHRRProcessor
 from AVHRR_collocation_pipeline.retrievers.retrieve_and_reproj import AVHRRHybridRetriever
-
-import AVHRR_collocation_pipeline.utils as utils
 
 from pytorch_retrieve.architectures import load_model
 
@@ -97,7 +94,7 @@ def test_end2end_one_orbit() -> None:
     )
 
     print("Running Stage-1 (collocate + WGS->polar + write NH/SH groups)...")
-    ds_polar = processor.process_orbit(
+    (ds_polar, tb11_wgs, x_vec, y_vec) = processor.process_orbit(
         avh_file=avh_file,
         avh_vars=AVH_VARS,
         input_vars=INPUT_VARS,
@@ -125,7 +122,7 @@ def test_end2end_one_orbit() -> None:
         lat_ts_sh=LAT_TS_SH,
     )
 
-    out_nc = BASE_OUT / f"{orbit_tag}__retrieved_{OUT_GRID}.nc"
+    out_nc = BASE_OUT / f"{orbit_tag}__retrieved_{OUT_GRID}_masked.nc"
     if out_nc.exists():
         out_nc.unlink()
 
@@ -147,7 +144,7 @@ def test_end2end_one_orbit() -> None:
     # --- Build datasets to write ---
     if OUT_GRID == "polar":
         # Keep polar coords and write retrieved fields on polar grid
-        import xarray as xr
+
         ds_nh = xr.Dataset(
             {
                 "retrieved_precip_mean": (("y", "x"), preds_nh["mean"]),
@@ -206,6 +203,9 @@ def test_end2end_one_orbit() -> None:
             nodata=float("nan"),
             tag=f"{orbit_tag}_SH",
         )
+
+        ds_nh = retriever.mask_ds_with_tb11_wgs(ds_nh, tb11_wgs, x_vec, y_vec)
+        ds_sh = retriever.mask_ds_with_tb11_wgs(ds_sh, tb11_wgs, x_vec, y_vec)
 
     else:
         raise ValueError("OUT_GRID must be 'polar' or 'wgs'")

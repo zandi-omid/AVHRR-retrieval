@@ -351,3 +351,76 @@ class AVHRRHybridRetriever:
             arr = np.where(arr >= drizzle, arr, 0.0)
             out[k] = arr.astype("float32")
         return out
+
+    # --------------------------------------------------
+    #  TB11-based masking on WGS grid
+    # --------------------------------------------------
+    def mask_ds_with_tb11_wgs(
+        self,
+        ds_hemi: xr.Dataset,
+        tb11_wgs: np.ndarray,
+        x_vec: np.ndarray,
+        y_vec: np.ndarray,
+        do_interp: bool = True,
+    ) -> xr.Dataset:
+        """
+        Mask a hemisphere WGS retrieval dataset using the global TB11 WGS grid.
+
+        Parameters
+        ----------
+        ds_hemi : xr.Dataset
+            Hemisphere retrievals in WGS (coords 'x', 'y').
+        tb11_wgs : np.ndarray
+            2D global TB11 grid, shape (len(y_vec), len(x_vec)).
+        x_vec, y_vec : np.ndarray
+            1D lon/lat vectors corresponding to tb11_wgs.
+        do_interp : bool
+            If True, align TB11 to ds_hemi grid with interp_like(method='nearest').
+        """
+
+        # 0) wrap TB11 into a DataArray
+        tb11_da = xr.DataArray(
+            tb11_wgs,
+            dims=("y", "x"),
+            coords={"y": y_vec, "x": x_vec},
+            name="temp_11_0um_nom",
+        )
+
+        # 1) latitude range of the hemisphere dataset
+        y_hemi_min = float(ds_hemi["y"].min())
+        y_hemi_max = float(ds_hemi["y"].max())
+
+        # 2) decide slice order based on TB11 y-direction
+        y_tb = tb11_da["y"].values
+        tb_desc = y_tb[0] > y_tb[-1]  # True if descending
+
+        if tb_desc:
+            # coord: 90 → -90; slice must be (max, min)
+            y_start = max(y_hemi_min, y_hemi_max)
+            y_end   = min(y_hemi_min, y_hemi_max)
+        else:
+            # coord: -90 → 90; slice must be (min, max)
+            y_start = min(y_hemi_min, y_hemi_max)
+            y_end   = max(y_hemi_min, y_hemi_max)
+
+        tb11_sub = tb11_da.sel(y=slice(y_start, y_end))
+
+        if tb11_sub.sizes["y"] == 0:
+            raise ValueError(
+                f"No lat overlap between TB11 grid and ds_hemi: "
+                f"TB11 y[{y_tb[0]:.2f} .. {y_tb[-1]:.2f}], "
+                f"ds_hemi y[{y_hemi_min:.2f} .. {y_hemi_max:.2f}]"
+            )
+
+        # 3) align to the exact retrieval grid if requested
+        if do_interp:
+            tb11_on_ds = tb11_sub.interp_like(ds_hemi, method="nearest")
+        else:
+            # assumes coords already match; this is stricter
+            tb11_on_ds = tb11_sub
+
+        # 4) mask everything where TB11 is NaN
+        mask = ~np.isfinite(tb11_on_ds)
+        ds_masked = ds_hemi.where(~mask)
+
+        return ds_masked
