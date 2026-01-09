@@ -204,6 +204,7 @@ def test_end2end_one_orbit() -> None:
             tag=f"{orbit_tag}_SH",
         )
 
+        # Masking with the gridded tb11 in WGS to remove the extra pixels coming from polar to WGS reprojection
         ds_nh = retriever.mask_ds_with_tb11_wgs(ds_nh, tb11_wgs, x_vec, y_vec)
         ds_sh = retriever.mask_ds_with_tb11_wgs(ds_sh, tb11_wgs, x_vec, y_vec)
 
