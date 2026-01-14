@@ -7,6 +7,9 @@ import time
 import socket
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
+import argparse
+import toml
+
 import torch
 import xarray as xr
 
@@ -20,47 +23,40 @@ from AVHRR_collocation_pipeline.retrievers.reproject import reproject_vars_polar
 from pytorch_retrieve.architectures import load_model
 
 # ------------------------------------------------------------
+# Parse config
+# ------------------------------------------------------------
+parser = argparse.ArgumentParser()
+parser.add_argument("--config", type=str, default="config/retrieve_config.toml")
+args = parser.parse_args()
+cfg = toml.load(args.config)
+
+# ------------------------------------------------------------
 # CONFIG
 # ------------------------------------------------------------
-AVHRR_FOLDERS = [
-    "/xdisk/behrangi/omidzandi/DL_Simon_chips/input_raw_data/AVHRR/2019",
-]
+AVHRR_FOLDERS = cfg["paths"]["avhrr_dirs"]            # list of dirs
+MERRA2_DIR     = cfg["paths"]["merra2_dir"]
+AUTOSNOW_DIR   = cfg["paths"]["autosnow_dir"]
 
-BASE_OUT = Path("/xdisk/behrangi/omidzandi/retrieved_maps/test_ret_parallel")
+BASE_OUT = Path(cfg["paths"]["out_dir"])
 BASE_OUT.mkdir(parents=True, exist_ok=True)
 
-GRID_RES = 0.25
-LAT_THRESH_NH = 45.0
-LAT_THRESH_SH = -45.0
-LAT_TS_NH = 70.0
-LAT_TS_SH = -71.0
+GRID_RES     = float(cfg["grid"]["resolution_deg"])
+LAT_THRESH_NH = float(cfg["grid"]["lat_thresh_nh"])
+LAT_THRESH_SH = float(cfg["grid"]["lat_thresh_sh"])
+LAT_TS_NH     = float(cfg["grid"]["lat_ts_nh"])
+LAT_TS_SH     = float(cfg["grid"]["lat_ts_sh"])
 
-MERRA2_DIR = "/xdisk/behrangi/omidzandi/DL_Simon_chips/input_raw_data/MERRA2/merra2_archive_19800101_20250831"
-AUTOSNOW_DIR = "/xdisk/behrangi/omidzandi/DL_Simon_chips/input_raw_data/AutoSnow/autosnow_in_geotif"
-MERRA2_VARS = ["TQV", "T2M"]
+CKPT_PATH  = cfg["DL"]["checkpoint"]
+TILE_SIZE  = int(cfg["DL"]["tile_size"])
+OVERLAP    = int(cfg["DL"]["overlap"])
 
-# DL inputs (must match what your model expects, in this order)
-INPUT_VARS = [
-    "cloud_probability",
-    "temp_11_0um_nom",
-    "temp_12_0um_nom",
-    "TQV",
-    "T2M",
-    "AutoSnow",
-]
+AVH_VARS      = cfg["input_vars"]["avh_vars"]
+MERRA2_VARS   = cfg["input_vars"]["merra2_vars"]
+INPUT_VARS    = cfg["input_vars"]["dl_inputs"]
 
-AVH_VARS = ["cloud_probability", "temp_11_0um_nom", "temp_12_0um_nom"]
-
-# retrieval output format:
-#   - "polar": write retrieved fields on polar grid
-#   - "wgs":   reproject retrieved fields to lat/lon
-OUT_GRID = "wgs"
-
-CKPT_PATH = (
-    "/xdisk/behrangi/omidzandi/DL_Simon_codes/avhrr_retrievals/"
-    "checkpoints/AVHRR_efficient_net_v2_pt_1_45_poleward_SH_ERA5_multi_node_keep_all_fp32-v1.ckpt"
-)
-
+OUT_GRID = cfg["output"]["grid"].lower()  # "wgs" or "polar"
+if OUT_GRID not in ("wgs", "polar"):
+    raise ValueError(f"output.grid must be 'wgs' or 'polar', got: {OUT_GRID!r}")
 
 # ------------------------------------------------------------
 # Small helpers
@@ -311,8 +307,8 @@ def main():
         model=model,
         device=device,
         input_vars=INPUT_VARS,
-        tile_size=1536,
-        overlap=64,
+        tile_size=TILE_SIZE,
+        overlap=OVERLAP,
         out_grid_resolution_deg=GRID_RES,
         lat_ts_nh=LAT_TS_NH,
         lat_ts_sh=LAT_TS_SH,

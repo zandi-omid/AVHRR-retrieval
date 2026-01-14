@@ -1,0 +1,25 @@
+[paths]
+avhrr_dirs = ["/xdisk/behrangi/omidzandi/DL_Simon_chips/input_raw_data/AVHRR/2019"]
+merra2_dir = "/xdisk/behrangi/omidzandi/DL_Simon_chips/input_raw_data/MERRA2/merra2_archive_19800101_20250831"
+autosnow_dir = "/xdisk/behrangi/omidzandi/DL_Simon_chips/input_raw_data/AutoSnow/autosnow_in_geotif"
+out_dir = "/xdisk/behrangi/omidzandi/retrieved_maps/2019"
+
+[grid]
+resolution_deg = 0.25
+lat_thresh_nh = 45.0
+lat_thresh_sh = -45.0
+lat_ts_nh = 70.0
+lat_ts_sh = -71.0
+
+[DL]
+checkpoint = "/xdisk/behrangi/omidzandi/DL_Simon_codes/avhrr_retrievals/checkpoints/AVHRR_efficient_net_v2.ckpt"
+tile_size = 1536
+overlap = 64
+
+[input_vars]
+avh_vars = ["cloud_probability", "temp_11_0um_nom", "temp_12_0um_nom"]
+merra2_vars = ["TQV", "T2M"]
+dl_inputs = ["cloud_probability", "temp_11_0um_nom", "temp_12_0um_nom", "TQV", "T2M", "AutoSnow"]
+
+[output]
+grid = "wgs"   # or "polar"
