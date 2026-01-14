@@ -13,6 +13,8 @@ import toml
 import torch
 import xarray as xr
 
+from tqdm import tqdm 
+
 from AVHRR_collocation_pipeline.readers.AutoSnow_reference import load_AutoSnow_reference
 from AVHRR_collocation_pipeline.readers.MERRA2_reference import load_MERRA2_reference
 
@@ -289,6 +291,24 @@ def main():
         print(f"[Rank {global_rank}] No files assigned, exiting.")
         return
 
+    # ---------- progress logging ---------- #
+    progress_file = BASE_OUT / f"progress_rank{global_rank}.log"
+    progress_f = open(progress_file, "w")
+
+    # Only rank 0 gets a live tqdm bar (optional)
+    if global_rank == 0:
+        pbar = tqdm(
+            total=len(my_files),
+            desc=f"[Rank {global_rank}]",
+            position=0,
+            leave=True,
+            dynamic_ncols=True,
+        )
+    else:
+        pbar = None
+
+    start_time = time.time()
+
     # ---------- device / model ---------- #
     n_gpus = torch.cuda.device_count()
     local_rank = int(os.environ.get("SLURM_LOCALID", global_rank % max(1, max(n_gpus, 1))))
@@ -404,10 +424,56 @@ def main():
                 except Exception:
                     pass
 
+        # ---------- progress logging ---------- #
+        completed = (pbar.n + 1) if pbar is not None else None
+        total = len(my_files)
+
+        # Update tqdm (if enabled for this rank)
+        if pbar is not None:
+            pbar.update(1)
+
+        # Fallback for ranks without tqdm
+        if completed is None:
+            completed = my_files.index(avh_file) + 1
+
+        progress = completed / total
+        elapsed = time.time() - start_time
+        its_per_sec = completed / elapsed if elapsed > 0 else 0.0
+
+        # --- ETA computation (per rank) ---
+        if its_per_sec > 0.0:
+            remaining = total - completed
+            eta_sec = remaining / its_per_sec
+            # simple formatting: hours + minutes
+            eta_hours = int(eta_sec // 3600)
+            eta_minutes = int((eta_sec % 3600) // 60)
+            if eta_hours > 0:
+                eta_str = f"{eta_hours}h {eta_minutes:02d}m"
+            else:
+                eta_str = f"{eta_minutes}m"
+        else:
+            eta_str = "--"
+
+        # --- textual progress bar for log file ---
+        bar_width = 40
+        filled = int(bar_width * progress)
+        bar = "#" * filled + "-" * (bar_width - filled)
+
+        progress_f.write(
+            f"{completed:5d}/{total:5d} [{bar}] "
+            f"{progress*100:5.1f}% | {its_per_sec:5.2f} it/s | "
+            f"ETA {eta_str} | {orbit_tag}\n"
+        )
+        progress_f.flush()
+
     # ---------- wait for CPU jobs ---------- #
     if futures:
         wait(futures)
     writer_pool.shutdown(wait=True)
+
+    if 'pbar' in locals() and pbar is not None:
+        pbar.close()
+    progress_f.close()
 
     # cleanup
     del model, retriever, processor
@@ -416,6 +482,7 @@ def main():
         torch.cuda.empty_cache()
 
     dt = time.time() - start_time
+
     print(f"[Rank {global_rank}] Done all orbits in {dt/3600:.2f} hours.", flush=True)
 
 
