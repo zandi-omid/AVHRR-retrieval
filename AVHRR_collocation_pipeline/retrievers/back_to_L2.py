@@ -34,6 +34,9 @@ class AVHRRBackToL2:
         ),
         line_dim: str = "scan_lines_along_track_direction",
         pix_dim: str = "pixel_elements_along_scan_direction",
+        *,
+        precip_scale: float = 0.005,
+        tb_scale: float = 0.01,
     ) -> None:
         """
         Parameters
@@ -49,6 +52,8 @@ class AVHRRBackToL2:
         self.retrieved_var_names = list(retrieved_var_names)
         self.line_dim = line_dim
         self.pix_dim = pix_dim
+        self.precip_scale = float(precip_scale)
+        self.tb_scale = float(tb_scale)
 
     # ------------------------------------------------------------------
     # Internal helper: merge hemispheric grids
@@ -108,33 +113,17 @@ class AVHRRBackToL2:
         Read the original L2 orbit, sample retrievals from ds_nh/ds_sh
         onto the swath grid, and write a new L2-like file containing:
 
-          - latitude, longitude
-          - scan_line_time
-          - temp_11_0um_nom
-          - temp_12_0um_nom
-          - self.retrieved_var_names
+        - latitude, longitude
+        - scan_line_time
+        - temp_11_0um_nom
+        - temp_12_0um_nom
+        - self.retrieved_var_names
 
         All 2D vars end up with shape:
-          (scan_lines_along_track_direction, pixel_elements_along_scan_direction)
+        (scan_lines_along_track_direction, pixel_elements_along_scan_direction)
 
         Many values will be NaN where the retrieval has no coverage
         (e.g., outside ±45° poleward domain).
-
-        Parameters
-        ----------
-        raw_orbit_path
-            Path to the original L2 orbit NetCDF file.
-        ds_nh
-            Retrieval dataset for the Northern Hemisphere (WGS, dims (y, x)).
-        ds_sh
-            Retrieval dataset for the Southern Hemisphere (WGS, dims (y, x)).
-        out_path
-            Path to output L2-like NetCDF file.
-
-        Returns
-        -------
-        Path
-            The path of the written file.
         """
         raw_orbit_path = Path(raw_orbit_path)
         out_path = Path(out_path)
@@ -158,13 +147,13 @@ class AVHRRBackToL2:
         out = out.assign_coords(
             {
                 line_dim: lat_raw.coords[line_dim] if line_dim in lat_raw.coords else range(ds_raw.dims[line_dim]),
-                pix_dim: lat_raw.coords[pix_dim] if pix_dim in lat_raw.coords else range(ds_raw.dims[pix_dim]),
-                "latitude": lat_raw,
+                pix_dim:  lat_raw.coords[pix_dim]  if pix_dim  in lat_raw.coords else range(ds_raw.dims[pix_dim]),
+                "latitude":  lat_raw,
                 "longitude": lon_raw,
             }
         )
 
-        # Keep the time + TBs (if present)
+        # Keep the time + TBs (values copied 1:1)
         if "scan_line_time" in ds_raw:
             out["scan_line_time"] = ds_raw["scan_line_time"]
 
@@ -184,15 +173,13 @@ class AVHRRBackToL2:
 
             # da_global has dims (y, x) with coordinates y,x in degrees
             # lat_raw, lon_raw have dims (line_dim, pix_dim) in degrees
-            # We can interpolate by matching y->latitude, x->longitude
             da_on_swath = da_global.interp(
                 y=lat_raw,
                 x=lon_raw,
                 method="nearest",
             )
 
-            # The result dims will already be (line_dim, pix_dim) because it
-            # takes dims from lat_raw/lon_raw, but we sanitize just in case.
+            # Ensure dims names match the swath names
             rename_map = {}
             if len(da_on_swath.dims) == 2:
                 d0, d1 = da_on_swath.dims
@@ -204,9 +191,12 @@ class AVHRRBackToL2:
             if rename_map:
                 da_on_swath = da_on_swath.rename(rename_map)
 
+            da_on_swath.attrs["coordinates"] = "latitude longitude"
+
             out[v] = da_on_swath
 
-        # Optional: carry some global attrs from original and add a note
+        # ----------------- 5. set attrs & encoding -----------------
+        # Global attrs: copy original, then add a comment
         out.attrs.update(ds_raw.attrs)
         out.attrs.update(
             {
@@ -215,36 +205,24 @@ class AVHRRBackToL2:
             }
         )
 
-        # ----------------- 5. write to NetCDF -----------------
-        out_path.parent.mkdir(parents=True, exist_ok=True)
+        # Build encoding:
+        #  - reuse original encoding for scan_line_time, temp_11, temp_12
+        #  - apply packed encoding only to retrieved precip vars
+        encoding: Dict[str, dict] = {}
 
-        encoding = {}
-
-        # 1) retrieved precip fields → uint16 @ precip_scale
+        # retrieved fields: write as plain float32, no packing
         for v in self.retrieved_var_names:
-            if v in out.data_vars:
-                encoding[v] = {
-                    "dtype": "uint16",
-                    "scale_factor": self.precip_scale,
-                    "_FillValue": 65535,
-                    "zlib": True,
-                    "complevel": 4,
-                }
+            if v not in out:
+                continue
+            encoding[v] = {
+                "dtype": "float32",
+                "_FillValue": float('nan'),
+                "zlib": True,
+                "complevel": 4,
+            }
 
-        # 2) TB variables → uint16 @ tb_scale
-        for v in ("temp_11_0um_nom", "temp_12_0um_nom"):
-            if v in out.data_vars:
-                encoding[v] = {
-                    "dtype": "uint16",
-                    "scale_factor": self.tb_scale,
-                    "_FillValue": 65535,
-                    "zlib": True,
-                    "complevel": 4,
-                }
-
-        # 3) scan_line_time → stored as-is (NO SCALE)
-        #    Do not add it to encoding, xarray leaves dtype unchanged
-
+        # ----------------- 6. write to NetCDF -----------------
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         out.to_netcdf(out_path, format="NETCDF4", encoding=encoding)
 
         ds_raw.close()

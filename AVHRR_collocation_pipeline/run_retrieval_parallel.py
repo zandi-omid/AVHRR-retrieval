@@ -22,6 +22,8 @@ from AVHRR_collocation_pipeline.retrievers.collocate_and_reproj import AVHRRProc
 from AVHRR_collocation_pipeline.retrievers.retrieve_and_reproj import AVHRRHybridRetriever
 from AVHRR_collocation_pipeline.retrievers.reproject import reproject_vars_polar_to_wgs
 
+from AVHRR_collocation_pipeline.retrievers.back_to_L2 import AVHRRBackToL2
+
 from pytorch_retrieve.architectures import load_model
 
 # ------------------------------------------------------------
@@ -60,6 +62,7 @@ OUT_GRID = cfg["output"]["grid"].lower()  # "wgs" or "polar"
 if OUT_GRID not in ("wgs", "polar"):
     raise ValueError(f"output.grid must be 'wgs' or 'polar', got: {OUT_GRID!r}")
 
+ENABLE_WGS = bool(cfg["output"].get("enable_wgs_output", True))
 # ------------------------------------------------------------
 # Small helpers
 # ------------------------------------------------------------
@@ -82,6 +85,7 @@ def extract_orbit_tag(avh_file: Path) -> str:
 def cpu_finalize_orbit(
     *,
     orbit_tag: str,
+    raw_orbit_path: Path | str,
     out_nc: Path,
     OUT_GRID: str,
     preds_nh: dict,
@@ -124,6 +128,20 @@ def cpu_finalize_orbit(
                     "retrieved_precip_q80":  (("y", "x"), preds_sh["q80"]),
                 },
                 coords={"x": xvec_sh, "y": yvec_sh},
+            )
+            
+            # exporting to nc file
+            retriever.write_orbit_netcdf(
+                out_path=out_nc,
+                ds_nh=ds_nh,
+                ds_sh=ds_sh,
+                var_scales={
+                    "retrieved_precip_mean": 0.005,
+                    "retrieved_precip_q70":  0.005,
+                    "retrieved_precip_q75":  0.005,
+                    "retrieved_precip_q80":  0.005,
+                },
+                default_scale=0.005,
             )
 
         elif OUT_GRID == "wgs":
@@ -171,19 +189,45 @@ def cpu_finalize_orbit(
         else:
             raise ValueError("OUT_GRID must be 'polar' or 'wgs'")
 
-        # ----------------- write NetCDF with NH/SH groups -----------------
-        retriever.write_orbit_netcdf(
-            out_path=out_nc,
-            ds_nh=ds_nh,
-            ds_sh=ds_sh,
-            var_scales={
-                "retrieved_precip_mean": 0.005,
-                "retrieved_precip_q70":  0.005,
-                "retrieved_precip_q75":  0.005,
-                "retrieved_precip_q80":  0.005,
-            },
-            default_scale=0.005,
-        )
+        if ENABLE_WGS:
+            # ----------------- write NetCDF with NH/SH groups -----------------
+            retriever.write_orbit_netcdf(
+                out_path=out_nc,
+                ds_nh=ds_nh,
+                ds_sh=ds_sh,
+                var_scales={
+                    "retrieved_precip_mean": 0.005,
+                    "retrieved_precip_q70":  0.005,
+                    "retrieved_precip_q75":  0.005,
+                    "retrieved_precip_q80":  0.005,
+                },
+                default_scale=0.005,
+            )
+        # ----------------- attach retrievals back to L2 swath -------------
+        try:
+            l2_writer = AVHRRBackToL2(
+                retrieved_var_names=[
+                    "retrieved_precip_mean",
+                    "retrieved_precip_q70",
+                    "retrieved_precip_q75",
+                    "retrieved_precip_q80",
+                ],
+                # scales and encoding handled inside the class
+            )
+
+            # e.g. same dir as out_nc, different suffix
+            l2_out_path = out_nc.with_name(f"{orbit_tag}_L2grid.nc")
+
+            l2_writer.attach_to_orbit(
+                raw_orbit_path=raw_orbit_path,
+                ds_nh=ds_nh,
+                ds_sh=ds_sh,
+                out_path=l2_out_path,
+            )
+            print(f"[CPU] Wrote L2-attached file: {l2_out_path}", flush=True)
+
+        except Exception as e_l2:
+            print(f"[WARN] Could not attach retrievals to L2 grid for {orbit_tag}: {e_l2}", flush=True)
 
     except Exception as e:
         print(f"❌ [CPU] Error in finalize for {orbit_tag}: {e}", flush=True)
@@ -390,6 +434,7 @@ def main():
             fut = writer_pool.submit(
                 cpu_finalize_orbit,
                 orbit_tag=gpu_out["orbit_tag"],
+                raw_orbit_path=avh_file,
                 out_nc=out_nc,
                 OUT_GRID=OUT_GRID,
                 preds_nh=gpu_out["preds_nh"],
