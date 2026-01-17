@@ -37,7 +37,7 @@ cfg = toml.load(args.config)
 # ------------------------------------------------------------
 # CONFIG
 # ------------------------------------------------------------
-AVHRR_FOLDERS = cfg["paths"]["avhrr_dirs"]            # list of dirs
+AVHRR_FOLDERS = cfg["paths"]["avhrr_dirs"]
 MERRA2_DIR     = cfg["paths"]["merra2_dir"]
 AUTOSNOW_DIR   = cfg["paths"]["autosnow_dir"]
 
@@ -63,6 +63,22 @@ if OUT_GRID not in ("wgs", "polar"):
     raise ValueError(f"output.grid must be 'wgs' or 'polar', got: {OUT_GRID!r}")
 
 ENABLE_WGS = bool(cfg["output"].get("enable_wgs_output", True))
+
+OUT_CFG = cfg.get("output", {})
+
+WRITE_VARS_NH = OUT_CFG.get("write_vars_nh", None)
+WRITE_VARS_SH = OUT_CFG.get("write_vars_sh", None)
+
+RENAME_VARS_NH = OUT_CFG.get("rename_vars_nh", {}) or {}
+RENAME_VARS_SH = OUT_CFG.get("rename_vars_sh", {}) or {}
+
+# empty list → write all
+if isinstance(WRITE_VARS_NH, list) and len(WRITE_VARS_NH) == 0:
+    WRITE_VARS_NH = None
+if isinstance(WRITE_VARS_SH, list) and len(WRITE_VARS_SH) == 0:
+    WRITE_VARS_SH = None
+
+
 # ------------------------------------------------------------
 # Small helpers
 # ------------------------------------------------------------
@@ -77,7 +93,18 @@ def list_avhrr_files(folders: list[str]) -> list[Path]:
 def extract_orbit_tag(avh_file: Path) -> str:
     return avh_file.stem
 
+def _filter_and_rename(ds, keep, rename):
+    rename = rename or {}
 
+    if keep is not None:
+        ds = ds[keep]
+
+    # validate no collisions
+    new_names = list(rename.values())
+    if len(new_names) != len(set(new_names)):
+        raise ValueError(f"Duplicate output variable names after renaming: {new_names}")
+
+    return ds.rename(rename)
 # ------------------------------------------------------------
 # CPU finalization: reprojection + TB11-mask + NetCDF write
 # runs inside CPU thread pool
@@ -98,6 +125,10 @@ def cpu_finalize_orbit(
     x_vec_global,
     y_vec_global,
     retriever: AVHRRHybridRetriever,
+    write_vars_nh: list[str] | None = None,
+    write_vars_sh: list[str] | None = None,
+    rename_vars_nh: dict[str, str] | None = None,
+    rename_vars_sh: dict[str, str] | None = None,
 ) -> None:
     """
     CPU-only stage:
@@ -146,18 +177,27 @@ def cpu_finalize_orbit(
 
         elif OUT_GRID == "wgs":
             # --- polar -> WGS via central utility ---
-            var_arrays_nh = {
+            # full dicts (unchanged)
+            full_nh = {
                 "retrieved_precip_mean": preds_nh["mean"],
                 "retrieved_precip_q70":  preds_nh["q70"],
                 "retrieved_precip_q75":  preds_nh["q75"],
                 "retrieved_precip_q80":  preds_nh["q80"],
             }
-            var_arrays_sh = {
+            full_sh = {
                 "retrieved_precip_mean": preds_sh["mean"],
                 "retrieved_precip_q70":  preds_sh["q70"],
                 "retrieved_precip_q75":  preds_sh["q75"],
                 "retrieved_precip_q80":  preds_sh["q80"],
             }
+
+            # choose what to write (defaults = all keys)
+            keep_nh = write_vars_nh or list(full_nh.keys())
+            keep_sh = write_vars_sh or list(full_sh.keys())
+
+            # filter
+            var_arrays_nh = {k: full_nh[k] for k in keep_nh}
+            var_arrays_sh = {k: full_sh[k] for k in keep_sh}
 
             ds_nh = reproject_vars_polar_to_wgs(
                 var_arrays_nh,
@@ -186,11 +226,14 @@ def cpu_finalize_orbit(
             ds_nh = retriever.mask_ds_with_tb11_wgs(ds_nh, tb11_wgs, x_vec_global, y_vec_global)
             ds_sh = retriever.mask_ds_with_tb11_wgs(ds_sh, tb11_wgs, x_vec_global, y_vec_global)
 
+            ds_nh = _filter_and_rename(ds_nh, write_vars_nh, rename_vars_nh)
+            ds_sh = _filter_and_rename(ds_sh, write_vars_sh, rename_vars_sh)
+
         else:
             raise ValueError("OUT_GRID must be 'polar' or 'wgs'")
 
         if ENABLE_WGS:
-            # ----------------- write NetCDF with NH/SH groups -----------------
+            # ----------------- write NetCDF with NH/SH groups (gridded WGS) -----------------
             retriever.write_orbit_netcdf(
                 out_path=out_nc,
                 ds_nh=ds_nh,
@@ -203,20 +246,17 @@ def cpu_finalize_orbit(
                 },
                 default_scale=0.005,
             )
-        # ----------------- attach retrievals back to L2 swath -------------
+        # ----------------- convert gridded WGS retrievals back to L2 swath -------------
         try:
+            retrieved_names = list(ds_nh.data_vars) + list(ds_sh.data_vars)
+            retrieved_names = sorted(set(retrieved_names))
+
             l2_writer = AVHRRBackToL2(
-                retrieved_var_names=[
-                    "retrieved_precip_mean",
-                    "retrieved_precip_q70",
-                    "retrieved_precip_q75",
-                    "retrieved_precip_q80",
-                ],
-                # scales and encoding handled inside the class
+                retrieved_var_names=retrieved_names,
             )
 
             # e.g. same dir as out_nc, different suffix
-            l2_out_path = out_nc.with_name(f"{orbit_tag}_L2grid.nc")
+            l2_out_path = out_nc.with_name(f"{orbit_tag}_L2.nc")
 
             l2_writer.attach_to_orbit(
                 raw_orbit_path=raw_orbit_path,
@@ -224,7 +264,6 @@ def cpu_finalize_orbit(
                 ds_sh=ds_sh,
                 out_path=l2_out_path,
             )
-            print(f"[CPU] Wrote L2-attached file: {l2_out_path}", flush=True)
 
         except Exception as e_l2:
             print(f"[WARN] Could not attach retrievals to L2 grid for {orbit_tag}: {e_l2}", flush=True)
@@ -447,6 +486,10 @@ def main():
                 x_vec_global=gpu_out["x_vec_global"],
                 y_vec_global=gpu_out["y_vec_global"],
                 retriever=retriever,
+                write_vars_nh=WRITE_VARS_NH,
+                write_vars_sh=WRITE_VARS_SH,
+                rename_vars_nh=RENAME_VARS_NH,
+                rename_vars_sh=RENAME_VARS_SH,
             )
             futures.append(fut)
 

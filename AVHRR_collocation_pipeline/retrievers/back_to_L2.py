@@ -34,9 +34,7 @@ class AVHRRBackToL2:
         ),
         line_dim: str = "scan_lines_along_track_direction",
         pix_dim: str = "pixel_elements_along_scan_direction",
-        *,
-        precip_scale: float = 0.005,
-        tb_scale: float = 0.01,
+
     ) -> None:
         """
         Parameters
@@ -52,8 +50,6 @@ class AVHRRBackToL2:
         self.retrieved_var_names = list(retrieved_var_names)
         self.line_dim = line_dim
         self.pix_dim = pix_dim
-        self.precip_scale = float(precip_scale)
-        self.tb_scale = float(tb_scale)
 
     # ------------------------------------------------------------------
     # Internal helper: merge hemispheric grids
@@ -129,7 +125,7 @@ class AVHRRBackToL2:
         out_path = Path(out_path)
 
         # ----------------- 1. open original orbit -----------------
-        ds_raw = xr.open_dataset(raw_orbit_path)
+        ds_raw = xr.open_dataset(raw_orbit_path, decode_timedelta=True)
 
         line_dim = self.line_dim
         pix_dim = self.pix_dim
@@ -146,8 +142,8 @@ class AVHRRBackToL2:
         # Keep latitude/longitude as coordinates on swath grid
         out = out.assign_coords(
             {
-                line_dim: lat_raw.coords[line_dim] if line_dim in lat_raw.coords else range(ds_raw.dims[line_dim]),
-                pix_dim:  lat_raw.coords[pix_dim]  if pix_dim  in lat_raw.coords else range(ds_raw.dims[pix_dim]),
+                line_dim: lat_raw.coords[line_dim] if line_dim in lat_raw.coords else range(ds_raw.sizes[line_dim]),
+                pix_dim:  lat_raw.coords[pix_dim]  if pix_dim  in lat_raw.coords else range(ds_raw.sizes[pix_dim]),
                 "latitude":  lat_raw,
                 "longitude": lon_raw,
             }

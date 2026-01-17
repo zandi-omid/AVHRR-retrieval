@@ -6,7 +6,7 @@
 #SBATCH --ntasks-per-node=2
 #SBATCH --cpus-per-task=8
 #SBATCH --mem-per-cpu=8G
-#SBATCH --time=1-00:00:00
+#SBATCH --time=1:00:00
 #SBATCH --job-name=rtr_prj_pt25
 #SBATCH --output=logs/ret_%j.out
 #SBATCH --error=logs/ret_%j.err
