@@ -28,3 +28,16 @@ __pycache__/
 logs/
 
 *.egg-info/
+
+# SLURM outputs
+slurm-*.out
+
+# VSCode / Jupyter junk
+*-jvsc-*.ipynb
+
+# Scratch diagnostics
+missing_merra2_days_*.txt
+
+# Python cache
+__pycache__/
+*.pyc
