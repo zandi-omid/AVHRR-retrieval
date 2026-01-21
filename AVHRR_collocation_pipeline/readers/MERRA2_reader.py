@@ -18,13 +18,18 @@ from netCDF4 import Dataset
 import AVHRR_collocation_pipeline.utils as utils
 
 
-__all__ = ["collocate_MERRA2"]
+__all__ = ["collocate_MERRA2", "MissingMERRA2File"]
 
+class MissingMERRA2File(RuntimeError):
+    """Raised when required MERRA2 daily file is missing for an orbit."""
+    pass
 
 def collocate_MERRA2(
     df,
     MERRA2_meta: Dict[str, Any],
     MERRA2_vars: List[str],
+    *, 
+    orbit_tag: str | None = None,
     hour_col: str = "scan_hour",
     date_col: str = "scan_date",
     debug: bool = False,
@@ -105,9 +110,12 @@ def collocate_MERRA2(
 
     for date in uniq_dates:
         file_path = date_to_file.get(date)
-        if file_path is None:
-            # date not available in directory => remain NaN
-            continue
+
+        if not file_path:
+            msg = f"[MERRA2] Missing file for date={date}"
+            if orbit_tag is not None:
+                msg += f" | orbit={orbit_tag}"
+            raise MissingMERRA2File(msg)
 
         mask_d = (DATES == date) & ON_GRID
         if not np.any(mask_d):

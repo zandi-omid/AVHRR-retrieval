@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import os
+import sys
 import gc
 import time
 import socket
@@ -17,6 +18,7 @@ from tqdm import tqdm
 
 from AVHRR_collocation_pipeline.readers.AutoSnow_reference import load_AutoSnow_reference
 from AVHRR_collocation_pipeline.readers.MERRA2_reference import load_MERRA2_reference
+from AVHRR_collocation_pipeline.readers.MERRA2_reader import MissingMERRA2File
 
 from AVHRR_collocation_pipeline.retrievers.collocate_and_reproj import AVHRRProcessor
 from AVHRR_collocation_pipeline.retrievers.retrieve_and_reproj import AVHRRHybridRetriever
@@ -503,6 +505,16 @@ def main():
             if len(futures) >= max_pending:
                 done, not_done = wait(futures, return_when=FIRST_COMPLETED)
                 futures = list(not_done)
+
+        except MissingMERRA2File as e:
+            print(f"[Rank {global_rank}] [SKIP] {orbit_tag}: {e}", file=sys.stderr, flush=True)
+            if out_nc.exists():
+                try:
+                    out_nc.unlink()
+                except Exception:
+                    pass
+
+            continue
 
         except Exception as e:
             print(f"[Rank {global_rank}] ❌ Error on orbit {orbit_tag}: {e}", flush=True)

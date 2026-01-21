@@ -1,0 +1,6 @@
+Submitting SLURM pipeline at: Sun Jan 18 17:42:31 MST 2026
+Submitted run_retrieval_parallel.sbatch → JobID: 5053813
+Submitted compress_to_tar.sbatch → JobID: 5053814
+Submitted export_to_rain.sbatch → JobID: 5053815
+Pipeline submission complete.
+retrieve → compress → export

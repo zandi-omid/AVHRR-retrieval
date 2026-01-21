@@ -8,7 +8,7 @@ import xarray as xr
 
 # --- readers ---
 from AVHRR_collocation_pipeline.readers.AVHRR_reader import read_AVHRR_orbit_to_df
-from AVHRR_collocation_pipeline.readers.MERRA2_reader import collocate_MERRA2
+from AVHRR_collocation_pipeline.readers.MERRA2_reader import collocate_MERRA2, MissingMERRA2File
 from AVHRR_collocation_pipeline.readers.AutoSnow_reader import collocate_AutoSnow
 
 # --- reprojection (new location) ---
@@ -20,6 +20,7 @@ from AVHRR_collocation_pipeline.retrievers.netcdf_encoding import build_uint16_e
 # --- utils ---
 import AVHRR_collocation_pipeline.utils as utils
 
+import matplotlib.pyplot as plt
 
 class AVHRRProcessor:
     """
@@ -96,6 +97,7 @@ class AVHRRProcessor:
         df,
         *,
         merra2_vars: List[str],
+        orbit_tag: str,
     ):
         """
         Collocate ONLY the features required by the DL model:
@@ -105,7 +107,7 @@ class AVHRRProcessor:
         IMERG/ERA5 are intentionally removed from Stage-1.
         """
         if self.merra2_meta is not None and merra2_vars:
-            df = collocate_MERRA2(df, self.merra2_meta, MERRA2_vars=merra2_vars)
+            df = collocate_MERRA2(df, self.merra2_meta, MERRA2_vars=merra2_vars, orbit_tag=orbit_tag)
 
         if self.autosnow_meta is not None:
             df = collocate_AutoSnow(df, self.autosnow_meta, date_col="scan_date", out_col="AutoSnow")
@@ -238,15 +240,58 @@ class AVHRRProcessor:
         if df is None:
             return None
 
-        # 2) Collocate DL features (no IMERG/ERA5)
-        df = self.collocate_dl_features(df, merra2_vars=merra2_vars)
-
-        # df.to_pickle('/xdisk/behrangi/omidzandi/retrieved_maps/test_dfs/df_new.pkl')
-
         orbit_tag = Path(avh_file).stem
+
+        # 2) Collocate DL features (no IMERG/ERA5)
+        df = self.collocate_dl_features(df, merra2_vars=merra2_vars, orbit_tag=orbit_tag)
 
         # 3) Grid required DL inputs
         var_grids = self.build_var_grids(df, x_vec, y_vec, input_vars)
+
+        def plot_var_grids(var_grids, x_vec, y_vec, title_prefix=""):
+            n = len(var_grids)
+            ncols = 3
+            nrows = int(np.ceil(n / ncols))
+
+            fig, axes = plt.subplots(
+                nrows, ncols,
+                figsize=(5 * ncols, 4 * nrows),
+                squeeze=False
+            )
+
+            for ax, (name, grid) in zip(axes.flat, var_grids.items()):
+                im = ax.imshow(
+                    grid,
+                    origin="upper",
+                    extent=[x_vec.min(), x_vec.max(), y_vec.min(), y_vec.max()],
+                    cmap="turbo"
+                )
+                ax.set_title(f"{title_prefix}{name}")
+                plt.colorbar(im, ax=ax, fraction=0.046)
+
+                nan_frac = np.isnan(grid).mean()
+                ax.text(
+                    0.01, 0.01,
+                    f"NaN frac: {nan_frac:.2f}",
+                    transform=ax.transAxes,
+                    fontsize=9,
+                    color="white",
+                    bbox=dict(facecolor="black", alpha=0.6),
+                )
+
+            # Hide unused axes
+            for ax in axes.flat[n:]:
+                ax.set_visible(False)
+
+            plt.tight_layout()
+            plt.show()
+        
+        plot_var_grids(
+            var_grids,
+            x_vec,
+            y_vec,
+            title_prefix="WGS: "
+        )
 
         # extract TB11 WGS grid
         tb11_wgs = var_grids["temp_11_0um_nom"].astype("float32")
