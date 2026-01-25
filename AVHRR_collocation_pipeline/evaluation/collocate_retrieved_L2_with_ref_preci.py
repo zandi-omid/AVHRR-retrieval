@@ -88,26 +88,65 @@ def _save_grids_to_nc(
     y_vec,
     grids: dict[str, np.ndarray],
     attrs: dict,
+    *,
+    lat_thresh_nh: float,
+    lat_thresh_sh: float,
 ):
+    """
+    Save WGS grids into ONE NetCDF file with two groups: NH and SH.
+    Mid-latitudes between (lat_thresh_sh, lat_thresh_nh) are excluded
+    from storage by subsetting the y-dimension.
+    """
     out_nc.parent.mkdir(parents=True, exist_ok=True)
 
-    ds = xr.Dataset(
-        coords={
-            "y": ("y", y_vec.astype("float32")),
-            "x": ("x", x_vec.astype("float32")),
-        }
-    )
+    x_vec = np.asarray(x_vec, dtype="float32")
+    y_vec = np.asarray(y_vec, dtype="float32")
+
+    # y masks (keep only poleward bands)
+    nh_mask = y_vec >= float(lat_thresh_nh)
+    sh_mask = y_vec <= float(lat_thresh_sh)
+
+    if not nh_mask.any():
+        raise ValueError(f"No NH y values found for lat_thresh_nh={lat_thresh_nh}")
+    if not sh_mask.any():
+        raise ValueError(f"No SH y values found for lat_thresh_sh={lat_thresh_sh}")
+
+    y_nh = y_vec[nh_mask]
+    y_sh = y_vec[sh_mask]
+
+    ds_nh = xr.Dataset(coords={"y": ("y", y_nh), "x": ("x", x_vec)})
+    ds_sh = xr.Dataset(coords={"y": ("y", y_sh), "x": ("x", x_vec)})
 
     for name, arr in grids.items():
+        arr = np.asarray(arr)
         if arr.ndim != 2:
             raise ValueError(f"Grid '{name}' is not 2D: shape={arr.shape}")
-        ds[name] = (("y", "x"), arr)
-        ds[name].attrs["coordinates"] = "y x"
+        if arr.shape != (len(y_vec), len(x_vec)):
+            raise ValueError(
+                f"Grid '{name}' shape mismatch. "
+                f"Expected {(len(y_vec), len(x_vec))}, got {arr.shape}"
+            )
 
-    ds.attrs.update(attrs)
+        # Subset rows by hemisphere
+        nh_arr = arr[nh_mask, :].astype("float32", copy=False)
+        sh_arr = arr[sh_mask, :].astype("float32", copy=False)
 
-    enc = {v: {"dtype": "float32", "zlib": True, "complevel": 4} for v in ds.data_vars}
-    ds.to_netcdf(out_nc, format="NETCDF4", encoding=enc)
+        ds_nh[name] = (("y", "x"), nh_arr)
+        ds_sh[name] = (("y", "x"), sh_arr)
+
+        ds_nh[name].attrs["coordinates"] = "y x"
+        ds_sh[name].attrs["coordinates"] = "y x"
+
+    # attrs: you can keep same attrs in both groups (and optionally also on root)
+    ds_nh.attrs.update(attrs)
+    ds_sh.attrs.update(attrs)
+
+    enc_nh = {v: {"dtype": "float32", "zlib": True, "complevel": 4} for v in ds_nh.data_vars}
+    enc_sh = {v: {"dtype": "float32", "zlib": True, "complevel": 4} for v in ds_sh.data_vars}
+
+    # Write groups
+    ds_nh.to_netcdf(out_nc, format="NETCDF4", mode="w", group="NH", encoding=enc_nh)
+    ds_sh.to_netcdf(out_nc, format="NETCDF4", mode="a", group="SH", encoding=enc_sh)
 
 
 def process_one_orbit(l2_file_str: str) -> tuple[str, bool, str]:
@@ -182,8 +221,15 @@ def process_one_orbit(l2_file_str: str) -> tuple[str, bool, str]:
             "era5_var": str(era5_var),
             "comment": "WGS grids from L2 orbit + collocated ERA5 (hourly) and optional IMERG (half-hourly).",
         }
-        _save_grids_to_nc(out_nc, x_vec, y_vec, grids, attrs)
-
+        _save_grids_to_nc(
+            out_nc,
+            x_vec,
+            y_vec,
+            grids,
+            attrs,
+            lat_thresh_nh=lat_thresh_nh,
+            lat_thresh_sh=lat_thresh_sh,
+        )
         return orbit_tag, True, str(out_nc)
 
     except Exception as e:
