@@ -27,4 +27,12 @@ __pycache__/
 *.log
 logs/
 
+# Generic outputs
+*.csv
+*.json
+
+# Scratch / temporary
+test.py
+__pycache__/
+
 *.egg-info/
