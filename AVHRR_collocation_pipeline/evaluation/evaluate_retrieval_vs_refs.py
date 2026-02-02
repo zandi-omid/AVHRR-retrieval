@@ -36,7 +36,7 @@ from tqdm import tqdm
 # -----------------------------
 # CONFIG (edit these)
 # -----------------------------
-FOLDER = "/scratch/omidzandi/evaluation/2019_collocated_with_ref_preci"  # your folder of collocated orbit .nc files
+FOLDER = "/scratch/omidzandi/evaluation/2010_collocated_with_ref_preci"  # your folder of collocated orbit .nc files
 GLOB_PATTERN = "*.nc"  # change if needed
 MAX_WORKERS = 24
 
@@ -55,7 +55,7 @@ KGE_VERSION = "2012"
 EPS = 1e-12
 
 # Output files
-SAVE_JSON = "eval_2019_retrieved_vs_refs_50_poleward.json"  # saved in CWD
+SAVE_JSON = "eval_2010_retrieved_vs_refs_50_poleward.json"  # saved in CWD
 SAVE_CSV = SAVE_JSON.replace(".json", "_per_orbit.csv")
 
 # Which reference to use for per-orbit quick summary (KGE column)
