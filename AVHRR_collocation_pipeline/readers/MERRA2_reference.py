@@ -94,19 +94,6 @@ def load_MERRA2_reference(MERRA2_dir: str) -> Dict[str, Any]:
     lat = lat_org[::-1].astype("float32")
     needs_lat_flip = True
 
-    # If lat is decreasing (90..-90), index_finder must handle decreasing axes.
-    # If yours does NOT, then set needs_lat_flip=True and reverse lat here.
-    # Given your earlier MERRA2 inspection showed lat increasing, we’re fine.
-    if not _is_monotonic_increasing(lat_org) and _is_monotonic_increasing(lat_org[::-1]):
-        # lat is decreasing
-        # Option A (recommended if index_finder can't handle decreasing):
-        # needs_lat_flip = True
-        # lat = lat_org[::-1]
-        # Option B (if index_finder handles decreasing): keep it as-is.
-        # We'll keep as-is by default.
-        lat = lat_org
-        needs_lat_flip = False
-
     # ---- LON handling: reorder ONLY if needed ----
     # Case 1: already -180..180 and increasing -> no reordering needed.
     # Case 2: 0..360 or unsorted -> shift to -180..180 and sort (and store index).
