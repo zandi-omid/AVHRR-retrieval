@@ -88,8 +88,11 @@ def load_MERRA2_reference(MERRA2_dir: str) -> Dict[str, Any]:
     # OR we can flip coords and set needs_lat_flip=True. Here we keep coords as-is and
     # only flip data later if you choose to standardize. The simplest: keep as-is and
     # detect if the file is decreasing (common in some products).
-    needs_lat_flip = False
-    lat = lat_org
+    # needs_lat_flip = False
+    # lat = lat_org
+
+    lat = lat_org[::-1].astype("float32")
+    needs_lat_flip = True
 
     # If lat is decreasing (90..-90), index_finder must handle decreasing axes.
     # If yours does NOT, then set needs_lat_flip=True and reverse lat here.

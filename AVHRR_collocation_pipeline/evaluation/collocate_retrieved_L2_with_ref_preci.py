@@ -8,6 +8,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
 import xarray as xr
+import pandas as pd
 
 from tqdm import tqdm
 
@@ -226,6 +227,10 @@ def process_one_orbit(l2_file_str: str) -> tuple[str, bool, str]:
             time_key="scan_hour_unix_era5"
         )
         
+        # dt = pd.to_datetime(df["scan_line_times"], unit="s", utc=True, errors="coerce")
+        # dt_m2 = (dt + pd.Timedelta(minutes=30)).dt.floor("h")  # MERRA2 slot
+        # df["scan_date_m2"] = dt_m2.dt.strftime("%Y-%m-%d")
+        # df["scan_hour_m2"] = dt_m2.dt.hour.astype("int16")
 
         # 5) MERRA2 (optional)
         if _MERRA2_META is not None:
@@ -241,7 +246,7 @@ def process_one_orbit(l2_file_str: str) -> tuple[str, bool, str]:
                     debug=True,
                 )        
         print("export df")
-        # df.to_pickle("/home/omidzandi/check_old_new_2010_dfs/new_pkl_files/new_" + orbit_tag + "_df.pkl")
+        df.to_pickle("/home/omidzandi/check_old_new_2010_dfs/new_pkl_files/flip_new_" + orbit_tag + "_df.pkl")
 
         cols = ["temp_12_0um_nom", "ERA5_tp"]
         for c in ["IMERG_preci", "TQV", "T2M"]:
