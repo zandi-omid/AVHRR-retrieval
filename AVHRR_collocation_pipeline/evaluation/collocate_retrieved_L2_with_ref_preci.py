@@ -26,6 +26,8 @@ from AVHRR_collocation_pipeline.readers.ERA5_reference import load_ERA5_referenc
 from AVHRR_collocation_pipeline.readers.IMERG_reader import collocate_IMERG_precip
 from AVHRR_collocation_pipeline.readers.ERA5_reader import collocate_ERA5_precip
 
+from AVHRR_collocation_pipeline.readers.MERRA2_reader import collocate_MERRA2, MissingMERRA2File
+from AVHRR_collocation_pipeline.readers.MERRA2_reference import load_MERRA2_reference
 
 # -----------------------------
 # Worker-global caches (per process)
@@ -34,6 +36,7 @@ _CFG = None
 _GRID = None  # (x_vec, y_vec, x, y)
 _ERA5_META_BY_YEAR = None
 _IMERG_META = None
+_MERRA2_META = None
 
 
 def _init_worker(cfg: dict):
@@ -41,7 +44,7 @@ def _init_worker(cfg: dict):
     Runs ONCE per worker process.
     Loads heavy references + builds WGS grid once, then cached in that worker.
     """
-    global _CFG, _GRID, _ERA5_META_BY_YEAR, _IMERG_META
+    global _CFG, _GRID, _ERA5_META_BY_YEAR, _IMERG_META, _MERRA2_META
 
     _CFG = cfg
 
@@ -63,6 +66,16 @@ def _init_worker(cfg: dict):
     else:
         _IMERG_META = None
         print(f"[Worker {os.getpid()}] IMERG disabled (flags.use_imerg=false).", flush=True)
+
+    # --- MERRA2 (optional) ---
+    use_merra2 = bool((cfg.get("flags", {}) or {}).get("use_merra2", True))
+    if use_merra2:
+        merra2_dir = cfg["paths"]["merra2_dir"]
+        print(f"[Worker {os.getpid()}] Loading MERRA2 reference from: {merra2_dir}", flush=True)
+        _MERRA2_META = load_MERRA2_reference(merra2_dir)
+    else:
+        _MERRA2_META = None
+        print(f"[Worker {os.getpid()}] MERRA2 disabled (flags.use_merra2=false).", flush=True)
 
 
 def _df_to_wgs_grids(
@@ -155,7 +168,7 @@ def process_one_orbit(l2_file_str: str) -> tuple[str, bool, str]:
 
     Returns: (orbit_tag, ok, message)
     """
-    global _CFG, _GRID, _ERA5_META_BY_YEAR, _IMERG_META
+    global _CFG, _GRID, _ERA5_META_BY_YEAR, _IMERG_META, _MERRA2_META
 
     if _CFG is None or _GRID is None or _ERA5_META_BY_YEAR is None:
         return ("<unknown>", False, "Worker not initialized: missing cfg/grid/ERA5 meta.")
@@ -201,6 +214,7 @@ def process_one_orbit(l2_file_str: str) -> tuple[str, bool, str]:
         # 3) IMERG (optional)
         if _IMERG_META is not None:
             df = collocate_IMERG_precip(df, _IMERG_META)
+            df = df[np.isfinite(df["IMERG_preci"])]
 
         # 4) ERA5 (required)
         df = collocate_ERA5_precip(
@@ -212,11 +226,31 @@ def process_one_orbit(l2_file_str: str) -> tuple[str, bool, str]:
             time_key="scan_hour_unix_era5"
         )
         
-        print("export df")
-        df.to_pickle("/home/omidzandi/check_old_new_2010_dfs/no_ret_" + orbit_tag + "_df.pkl")
 
-        # drop nan values of IMERG
-        df = df[np.isfinite(df["IMERG_preci"])]
+        # 5) MERRA2 (optional)
+        if _MERRA2_META is not None:
+            merra2_vars = list(_CFG["vars"].get("merra2_vars", []))
+            if merra2_vars:
+                df = collocate_MERRA2(
+                    df,
+                    _MERRA2_META,
+                    MERRA2_vars=merra2_vars,
+                    orbit_tag=orbit_tag,
+                    date_col="scan_date_m2",
+                    hour_col="scan_hour_m2",
+                    debug=True,
+                )        
+        print("export df")
+        # df.to_pickle("/home/omidzandi/check_old_new_2010_dfs/new_pkl_files/new_" + orbit_tag + "_df.pkl")
+
+        cols = ["temp_12_0um_nom", "ERA5_tp"]
+        for c in ["IMERG_preci", "TQV", "T2M"]:
+            if c in df.columns:
+                cols.append(c)
+
+        print("finite counts:")
+        for c in cols:
+            print(f"  {c:12s} finite: {np.isfinite(df[c].to_numpy()).sum()}")
 
         # 5) grid to WGS
         grids = _df_to_wgs_grids(df, x_vec, y_vec, x, y, grid_vars)
