@@ -8,6 +8,7 @@ test_maps/
 *.hdf5
 *.tar
 *.tar.gz
+*.pkl
 
 # --------- Python ----------
 __pycache__/

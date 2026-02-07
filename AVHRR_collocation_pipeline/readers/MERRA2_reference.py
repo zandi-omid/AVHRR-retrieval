@@ -81,15 +81,10 @@ def load_MERRA2_reference(MERRA2_dir: str) -> Dict[str, Any]:
         lon_org = np.array(ds["lon"][:], dtype="float32")
         lat_org = np.array(ds["lat"][:], dtype="float32")
 
-    # ---- LAT handling: do we need to flip data later? ----
-    # We want meta["lat"] to be the coordinate array that matches the data as read.
-    # Your index_finder expects coords to match the stored array orientation.
-    # If lat is decreasing (90..-90), we keep it decreasing and set needs_lat_flip=False,
-    # OR we can flip coords and set needs_lat_flip=True. Here we keep coords as-is and
-    # only flip data later if you choose to standardize. The simplest: keep as-is and
-    # detect if the file is decreasing (common in some products).
-    # needs_lat_flip = False
-    # lat = lat_org
+    # ---- LAT handling: do we need to flip data? ----
+    # OLD-compatible behavior:
+    # - meta lat is decreasing (90..-90)
+    # - collocator flips data to match that meta lat
 
     lat = lat_org[::-1].astype("float32")
     needs_lat_flip = True
