@@ -245,8 +245,8 @@ def process_one_orbit(l2_file_str: str) -> tuple[str, bool, str]:
                     hour_col="scan_hour_m2",
                     debug=True,
                 )        
-        print("export df")
-        df.to_pickle("/home/omidzandi/check_old_new_2010_dfs/new_pkl_files/flip_new_" + orbit_tag + "_df.pkl")
+
+        # df.to_pickle("/home/omidzandi/check_old_new_2010_dfs/new_pkl_files/flip_new_" + orbit_tag + "_df.pkl")
 
         cols = ["temp_12_0um_nom", "ERA5_tp"]
         for c in ["IMERG_preci", "TQV", "T2M"]:
