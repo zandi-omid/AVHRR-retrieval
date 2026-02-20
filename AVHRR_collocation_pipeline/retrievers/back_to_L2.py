@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Sequence, Dict, Optional
 
+import numpy as np
 import xarray as xr
-
 
 class AVHRRBackToL2:
     """
@@ -169,17 +169,54 @@ class AVHRRBackToL2:
         out_path: Path | str,
     ) -> Path:
         out_path = Path(out_path)
+
         out_ds = self.attach_to_orbit_ds(raw_orbit_path, ds_nh, ds_sh)
 
+        # -------------------------------
+        # A) Global attrs (THIS is what was missing)
+        # -------------------------------
+        out_ds.attrs.update({
+            "title": "AVHRR precipitation retrieval",
+            "orbit_tag": Path(raw_orbit_path).stem,
+            "created_utc": str(np.datetime64("now")),
+            "institution": "University of Arizona",
+        })
+        for src in (ds_nh, ds_sh):
+            for k, v in src.attrs.items():
+                out_ds.attrs.setdefault(k, v)
+
+        # -------------------------------
+        # B) Variable attrs for precipitation-like vars
+        # -------------------------------
+        def _is_precip_var(name: str) -> bool:
+            return name == "precipitation" or name.startswith("precipitation_")
+
+        for v in list(out_ds.data_vars):
+            if not _is_precip_var(v):
+                continue
+            out_ds[v].attrs.setdefault("units", "mm hr-1")
+            out_ds[v].attrs.setdefault("long_name", "Retrieved surface precipitation rate")
+            out_ds[v].attrs.setdefault("standard_name", "surface_precipitation_rate")
+            out_ds[v].attrs["coordinates"] = "latitude longitude"
+
+        # -------------------------------
+        # C) Drop redundant 2D x/y if present
+        # -------------------------------
+        for nm, target in (("x", "longitude"), ("y", "latitude")):
+            if nm in out_ds.variables and target in out_ds.variables:
+                if out_ds[nm].ndim == out_ds[target].ndim == 2:
+                    out_ds = out_ds.drop_vars(nm, errors="ignore")
+
+        if "coordinates" in out_ds.attrs and str(out_ds.attrs["coordinates"]).strip() in ("x y", "y x"):
+            out_ds.attrs["coordinates"] = "latitude longitude"
+
+        # -------------------------------
+        # D) Encoding (make sure you compress the actual written precip var names)
+        # -------------------------------
         encoding = {}
-        for v in self.retrieved_var_names:
-            if v in out_ds:
-                encoding[v] = {
-                    "dtype": "float32",
-                    "_FillValue": float("nan"),
-                    "zlib": True,
-                    "complevel": 4,
-                }
+        for v in out_ds.data_vars:
+            if _is_precip_var(v):  # compress precip vars
+                encoding[v] = {"dtype": "float32", "_FillValue": float("nan"), "zlib": True, "complevel": 4}
 
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_ds.to_netcdf(out_path, format="NETCDF4", encoding=encoding)

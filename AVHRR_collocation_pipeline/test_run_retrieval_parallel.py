@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import numpy as np
 from pathlib import Path
 import os
 import sys
@@ -8,9 +7,6 @@ import gc
 import time
 import socket
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
-
-import argparse
-import toml
 
 import torch
 import xarray as xr
@@ -33,69 +29,36 @@ from AVHRR_collocation_pipeline.retrievers.limb_correction.lut_loader import loa
 
 limb_assets = load_limbcorr_assets("/xdisk/behrangi/omidzandi/AVHRR-retrieval/AVHRR_collocation_pipeline/retrievers/limb_correction")
 
-# ------------------------------------------------------------
-# Parse config
-# ------------------------------------------------------------
-parser = argparse.ArgumentParser()
-parser.add_argument("--config", type=str, default="config/retrieve_config.toml")
-parser.add_argument(
-    "--stage1-only",
-    action="store_true",
-    help="Run only (collocation + reprojection). Skip retrieval + writing.",
-)
-args = parser.parse_args()
-cfg = toml.load(args.config)
 
-STAGE1_ONLY = args.stage1_only
-# ------------------------------------------------------------
-# CONFIG
-# ------------------------------------------------------------
-AVHRR_FOLDERS = cfg["paths"]["avhrr_dirs"]
-MERRA2_DIR     = cfg["paths"]["merra2_dir"]
-AUTOSNOW_DIR   = cfg["paths"]["autosnow_dir"]
-
-BASE_OUT = Path(cfg["paths"]["out_dir"])
+# -----------------------------
+# CONFIG (from your TOML)
+# -----------------------------
+AVHRR_FOLDERS = ["/xdisk/behrangi/omidzandi/DL_Simon_chips/input_raw_data/AVHRR/2019_subset"]
+MERRA2_DIR = "/xdisk/behrangi/omidzandi/DL_Simon_chips/input_raw_data/MERRA2/merra2_archive_19800101_20250831"
+AUTOSNOW_DIR = "/xdisk/behrangi/omidzandi/DL_Simon_chips/input_raw_data/AutoSnow/autosnow_in_geotif"
+BASE_OUT = Path("/xdisk/behrangi/omidzandi/retrieved_maps/test")
 BASE_OUT.mkdir(parents=True, exist_ok=True)
 
-colloc_dir = cfg["paths"].get("collocated_polar_dir", None)
-COLLOC_POLAR_DIR = Path(colloc_dir) if colloc_dir else None
+GRID_RES = 0.25
+LAT_THRESH_NH = 45.0
+LAT_THRESH_SH = -45.0
+LAT_TS_NH = 70.0
+LAT_TS_SH = -71.0
 
-GRID_RES     = float(cfg["grid"]["resolution_deg"])
-LAT_THRESH_NH = float(cfg["grid"]["lat_thresh_nh"])
-LAT_THRESH_SH = float(cfg["grid"]["lat_thresh_sh"])
-LAT_TS_NH     = float(cfg["grid"]["lat_ts_nh"])
-LAT_TS_SH     = float(cfg["grid"]["lat_ts_sh"])
+CKPT_PATH = "/xdisk/behrangi/omidzandi/DL_Simon_codes/avhrr_retrievals/checkpoints/AVHRR_efficient_net_v2_pt_1_45_poleward_SH_ERA5_multi_node_keep_all_fp32-v1.ckpt"
+TILE_SIZE = 1536
+OVERLAP = 64
 
-CKPT_PATH  = cfg["DL"]["checkpoint"]
-TILE_SIZE  = int(cfg["DL"]["tile_size"])
-OVERLAP    = int(cfg["DL"]["overlap"])
+AVH_VARS = ["cloud_probability", "temp_11_0um_nom", "temp_12_0um_nom"]
+MERRA2_VARS = ["TQV", "T2M"]
+INPUT_VARS = ["cloud_probability", "temp_11_0um_nom", "temp_12_0um_nom", "TQV", "T2M", "AutoSnow"]
 
-AVH_VARS      = cfg["input_vars"]["avh_vars"]
-MERRA2_VARS   = cfg["input_vars"]["merra2_vars"]
-INPUT_VARS    = cfg["input_vars"]["dl_inputs"]
-
-DO_LIMB_CORRECTION = cfg.get("limb_correction", {}).get("do_limb_correction", False)
-
-OUT_GRID = cfg["output"]["grid"].lower()  # "wgs" or "polar"
-if OUT_GRID not in ("wgs", "polar"):
-    raise ValueError(f"output.grid must be 'wgs' or 'polar', got: {OUT_GRID!r}")
-
-ENABLE_WGS = bool(cfg["output"].get("enable_wgs_output", True))
-
-OUT_CFG = cfg.get("output", {})
-
-WRITE_VARS_NH = OUT_CFG.get("write_vars_nh", None)
-WRITE_VARS_SH = OUT_CFG.get("write_vars_sh", None)
-
-RENAME_VARS_NH = OUT_CFG.get("rename_vars_nh", {}) or {}
-RENAME_VARS_SH = OUT_CFG.get("rename_vars_sh", {}) or {}
-
-# empty list → write all
-if isinstance(WRITE_VARS_NH, list) and len(WRITE_VARS_NH) == 0:
-    WRITE_VARS_NH = None
-if isinstance(WRITE_VARS_SH, list) and len(WRITE_VARS_SH) == 0:
-    WRITE_VARS_SH = None
-
+OUT_GRID = "wgs"              # "wgs" or "polar"
+ENABLE_WGS = False            # << your TOML
+WRITE_VARS_NH = ["retrieved_precip_q80"]
+WRITE_VARS_SH = ["retrieved_precip_q70"]
+RENAME_VARS_NH = {"retrieved_precip_q80": "retrieved"}
+RENAME_VARS_SH = {"retrieved_precip_q70": "retrieved"}
 
 # ------------------------------------------------------------
 # Small helpers
@@ -123,39 +86,6 @@ def _filter_and_rename(ds, keep, rename):
         raise ValueError(f"Duplicate output variable names after renaming: {new_names}")
 
     return ds.rename(rename)
-
-def _attach_precip_attrs(ds: xr.Dataset, units: str = "mm hr-1") -> xr.Dataset:
-    for v in ds.data_vars:
-        ds[v].attrs.setdefault("units", units)
-        ds[v].attrs.setdefault("long_name", v.replace("_", " "))
-        ds[v].attrs.setdefault("standard_name", "surface_precipitation_rate")
-    return ds
-
-def _attach_global_attrs(
-    ds: xr.Dataset,
-    *,
-    orbit_tag: str,
-    out_grid: str,
-    institution: str = "University of Arizona",
-) -> xr.Dataset:
-    """
-    Attach CF-style global metadata to dataset.
-    """
-
-    ds.attrs.update({
-        "title": "AVHRR retrieved surface precipitation rate",
-        "summary": (
-            "Satellite-based precipitation retrieval derived from AVHRR sensor's"
-            "infrared observations using deep learning (pytorch_retrieve package)."
-        ),
-        "institution": institution,
-        "source": "AVHRR Level-2 swath data + auxiliary predictors (reanalysis / ancillary data)",
-        "orbit_tag": orbit_tag,
-        "grid": out_grid,
-        "created_utc": str(np.datetime64("now")),
-    })
-
-    return ds
 # ------------------------------------------------------------
 # CPU finalization: reprojection + TB11-mask + NetCDF write
 # runs inside CPU thread pool
@@ -283,12 +213,6 @@ def cpu_finalize_orbit(
         else:
             raise ValueError("OUT_GRID must be 'polar' or 'wgs'")
 
-        ds_nh = _attach_precip_attrs(ds_nh, units="mm hr-1")
-        ds_sh = _attach_precip_attrs(ds_sh, units="mm hr-1")
-
-        ds_nh = _attach_global_attrs(ds_nh, orbit_tag=orbit_tag, out_grid=OUT_GRID)
-        ds_sh = _attach_global_attrs(ds_sh, orbit_tag=orbit_tag, out_grid=OUT_GRID)
-
         if ENABLE_WGS:
             # ----------------- write NetCDF with NH/SH groups (gridded WGS) -----------------
             retriever.write_orbit_netcdf(
@@ -345,8 +269,6 @@ def gpu_stage_for_orbit(
     retriever: AVHRRHybridRetriever,
     merra2_meta,
     autosnow_meta,
-    *,
-    stage1_only: bool = False,
 ):
     """
     Does:
@@ -361,27 +283,14 @@ def gpu_stage_for_orbit(
     """
     orbit_tag = extract_orbit_tag(avh_file)
 
-    out_polar_nc = None
-    if COLLOC_POLAR_DIR is not None:
-        COLLOC_POLAR_DIR.mkdir(parents=True, exist_ok=True)
-        out_polar_nc = COLLOC_POLAR_DIR / f"{orbit_tag}_collocated_polar.nc"
-
-
     # --- Stage-1: collocate + WGS->polar --- #
     ds_polar, tb11_wgs, x_vec_global, y_vec_global = processor.process_orbit(
         avh_file=avh_file,
         avh_vars=AVH_VARS,
         input_vars=INPUT_VARS,
         merra2_vars=MERRA2_VARS,
-        do_limb_correction=DO_LIMB_CORRECTION,
-        out_polar_nc=out_polar_nc,
+        # out_polar_nc=BASE_OUT / f"{orbit_tag}_polar_inputs.nc",
     )
-
-    if stage1_only:
-        return {
-            "orbit_tag": orbit_tag,
-            "stage1_only": True,
-        }
 
     ds_nh_polar = ds_polar["NH"]
     ds_sh_polar = ds_polar["SH"]
@@ -540,12 +449,7 @@ def main():
                 retriever=retriever,
                 merra2_meta=merra2_meta,
                 autosnow_meta=autosnow_meta,
-                stage1_only=STAGE1_ONLY,
             )
-
-            if STAGE1_ONLY:
-                # Stage-1 done; skip GPU retrieval + CPU finalization
-                continue
 
             # ---------- CPU part: submit to threadpool ---------- #
             fut = writer_pool.submit(

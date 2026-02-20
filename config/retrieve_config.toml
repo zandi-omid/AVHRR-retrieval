@@ -2,9 +2,8 @@
 avhrr_dirs = ["/xdisk/behrangi/omidzandi/DL_Simon_chips/input_raw_data/AVHRR/2010_subset"]
 merra2_dir = "/xdisk/behrangi/omidzandi/DL_Simon_chips/input_raw_data/MERRA2/merra2_archive_19800101_20250831"
 autosnow_dir = "/xdisk/behrangi/omidzandi/DL_Simon_chips/input_raw_data/AutoSnow/autosnow_in_geotif"
-out_dir = "/xdisk/behrangi/omidzandi/retrieved_maps/2010"
-collocated_polar_dir = "/xdisk/behrangi/omidzandi/retrieved_maps/2010_test/collocated_polar"
-
+out_dir = "/xdisk/behrangi/omidzandi/retrieved_maps/2010_test_adding_attrs"
+collocated_polar_dir = ""
 
 [grid]
 resolution_deg = 0.25
@@ -26,7 +25,7 @@ dl_inputs = ["cloud_probability", "temp_11_0um_nom", "temp_12_0um_nom", "TQV", "
 [output]
 grid = "wgs"   # "wgs" or "polar"
 
-# Whether we want to export the retrieved percipitation in WGS to nc file or not (applying no back2L2!).
+# Whether we want to export the retrieved precipitation in WGS to nc file or not (applying no back2L2!).
 enable_wgs_output = false   # true or false 
 # !!!!!!!!NOTE: if you set this variable (enable_wgs_output) true, you must set the grid variable to wgs as well!
 
@@ -38,8 +37,8 @@ write_vars_sh = ["retrieved_precip_q70"]
 # How to name them in the output NetCDF
 # key   = original variable name
 # value = output variable name
-rename_vars_nh = { retrieved_precip_q80 = "retrieved" }
-rename_vars_sh = { retrieved_precip_q70 = "retrieved" }
+rename_vars_nh = { retrieved_precip_q80 = "precipitation" }
+rename_vars_sh = { retrieved_precip_q70 = "precipitation" }
 
 [limb_correction]
-do_limb_correction = false
+do_limb_correction = true
