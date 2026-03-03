@@ -1,8 +1,8 @@
 [paths]
-avhrr_dirs = ["/xdisk/behrangi/omidzandi/DL_Simon_chips/input_raw_data/AVHRR/2010_subset"]
+avhrr_dirs = ["/xdisk/behrangi/omidzandi/DL_Simon_chips/input_raw_data/AVHRR/2019"]
 merra2_dir = "/xdisk/behrangi/omidzandi/DL_Simon_chips/input_raw_data/MERRA2/merra2_archive_19800101_20250831"
 autosnow_dir = "/xdisk/behrangi/omidzandi/DL_Simon_chips/input_raw_data/AutoSnow/autosnow_in_geotif"
-out_dir = "/xdisk/behrangi/omidzandi/retrieved_maps/2010_test_adding_attrs"
+out_dir = "/xdisk/behrangi/omidzandi/retrieved_maps/2019"
 collocated_polar_dir = ""
 
 [grid]

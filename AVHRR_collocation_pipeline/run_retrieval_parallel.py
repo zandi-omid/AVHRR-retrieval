@@ -145,7 +145,7 @@ def _attach_global_attrs(
     ds.attrs.update({
         "title": "AVHRR retrieved surface precipitation rate",
         "summary": (
-            "Satellite-based precipitation retrieval derived from AVHRR sensor's"
+            "Satellite-based precipitation retrieval derived from AVHRR sensors"
             "infrared observations using deep learning (pytorch_retrieve package)."
         ),
         "institution": institution,

@@ -124,7 +124,6 @@ class AVHRRBackToL2:
         )
 
         # Always keep time/TBs if present (your current behavior)
-
         out["scan_line_time"] = ds_raw["scan_line_time"]
         out["temp_11_0um_nom"] = ds_raw["temp_11_0um_nom"]
         out["temp_12_0um_nom"] = ds_raw["temp_12_0um_nom"]
