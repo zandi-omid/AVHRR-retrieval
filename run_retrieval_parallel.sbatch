@@ -1,13 +1,13 @@
 #!/bin/bash
 #SBATCH --account=xdong
 #SBATCH --partition=gpu_standard
-#SBATCH --nodes=5
+#SBATCH --nodes=1
 #SBATCH --gres=gpu:2
 #SBATCH --ntasks-per-node=2
 #SBATCH --cpus-per-task=8
 #SBATCH --mem-per-cpu=8G
 #SBATCH --time=36:00:00
-#SBATCH --job-name=rtr_prj_pt25
+#SBATCH --job-name=2019missfiles
 #SBATCH --output=logs/ret_%j.out
 #SBATCH --error=logs/ret_%j.err
 #SBATCH --exclusive
