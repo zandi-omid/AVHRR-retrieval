@@ -96,7 +96,7 @@ if isinstance(WRITE_VARS_NH, list) and len(WRITE_VARS_NH) == 0:
 if isinstance(WRITE_VARS_SH, list) and len(WRITE_VARS_SH) == 0:
     WRITE_VARS_SH = None
 
-
+WRITE_BACK_TO_L2 = bool(cfg.get("output", {}).get("write_back_to_l2", True))
 # ------------------------------------------------------------
 # Small helpers
 # ------------------------------------------------------------
@@ -181,17 +181,13 @@ def cpu_finalize_orbit(
     rename_vars_nh: dict[str, str] | None = None,
     rename_vars_sh: dict[str, str] | None = None,
 ) -> None:
-    """
-    CPU-only stage:
-      - polar -> WGS reprojection (if OUT_GRID == 'wgs')
-      - optional TB11 WGS masking
-      - write NetCDF with NH / SH groups
-    """
+    ds_nh = None
+    ds_sh = None
+
     try:
         if out_nc.exists():
             out_nc.unlink()
 
-        # ----------------- build NH/SH datasets -----------------
         if OUT_GRID == "polar":
             ds_nh = xr.Dataset(
                 {
@@ -211,8 +207,8 @@ def cpu_finalize_orbit(
                 },
                 coords={"x": xvec_sh, "y": yvec_sh},
             )
-            
-            # exporting to nc file
+
+            print(f"[DEBUG] Writing gridded polar output: {out_nc}", flush=True)
             retriever.write_orbit_netcdf(
                 out_path=out_nc,
                 ds_nh=ds_nh,
@@ -227,8 +223,6 @@ def cpu_finalize_orbit(
             )
 
         elif OUT_GRID == "wgs":
-            # --- polar -> WGS via central utility ---
-            # full dicts (unchanged)
             full_nh = {
                 "retrieved_precip_mean": preds_nh["mean"],
                 "retrieved_precip_q70":  preds_nh["q70"],
@@ -242,11 +236,9 @@ def cpu_finalize_orbit(
                 "retrieved_precip_q80":  preds_sh["q80"],
             }
 
-            # choose what to write (defaults = all keys)
             keep_nh = write_vars_nh or list(full_nh.keys())
             keep_sh = write_vars_sh or list(full_sh.keys())
 
-            # filter
             var_arrays_nh = {k: full_nh[k] for k in keep_nh}
             var_arrays_sh = {k: full_sh[k] for k in keep_sh}
 
@@ -273,68 +265,75 @@ def cpu_finalize_orbit(
                 tag=f"{orbit_tag}_SH",
             )
 
-            # --- mask extra pixels using global TB11 WGS swath ---
             ds_nh = retriever.mask_ds_with_tb11_wgs(ds_nh, tb11_wgs, x_vec_global, y_vec_global)
             ds_sh = retriever.mask_ds_with_tb11_wgs(ds_sh, tb11_wgs, x_vec_global, y_vec_global)
 
             ds_nh = _filter_and_rename(ds_nh, write_vars_nh, rename_vars_nh)
             ds_sh = _filter_and_rename(ds_sh, write_vars_sh, rename_vars_sh)
 
+            ds_nh = _attach_precip_attrs(ds_nh, units="mm hr-1")
+            ds_sh = _attach_precip_attrs(ds_sh, units="mm hr-1")
+
+            ds_nh = _attach_global_attrs(ds_nh, orbit_tag=orbit_tag, out_grid=OUT_GRID)
+            ds_sh = _attach_global_attrs(ds_sh, orbit_tag=orbit_tag, out_grid=OUT_GRID)
+
+            if ENABLE_WGS:
+                print(f"[DEBUG] Writing gridded WGS output: {out_nc}", flush=True)
+                retriever.write_orbit_netcdf(
+                    out_path=out_nc,
+                    ds_nh=ds_nh,
+                    ds_sh=ds_sh,
+                    var_scales={
+                        "retrieved_precip_mean": 0.005,
+                        "retrieved_precip_q70":  0.005,
+                        "retrieved_precip_q75":  0.005,
+                        "retrieved_precip_q80":  0.005,
+                    },
+                    default_scale=0.005,
+                )
+
         else:
-            raise ValueError("OUT_GRID must be 'polar' or 'wgs'")
+            raise ValueError(f"OUT_GRID must be 'polar' or 'wgs', got {OUT_GRID!r}")
 
-        ds_nh = _attach_precip_attrs(ds_nh, units="mm hr-1")
-        ds_sh = _attach_precip_attrs(ds_sh, units="mm hr-1")
+        if WRITE_BACK_TO_L2 and ds_nh is not None and ds_sh is not None:
+            try:
+                retrieved_names = list(ds_nh.data_vars) + list(ds_sh.data_vars)
+                retrieved_names = sorted(set(retrieved_names))
 
-        ds_nh = _attach_global_attrs(ds_nh, orbit_tag=orbit_tag, out_grid=OUT_GRID)
-        ds_sh = _attach_global_attrs(ds_sh, orbit_tag=orbit_tag, out_grid=OUT_GRID)
+                l2_writer = AVHRRBackToL2(
+                    retrieved_var_names=retrieved_names,
+                )
 
-        if ENABLE_WGS:
-            # ----------------- write NetCDF with NH/SH groups (gridded WGS) -----------------
-            retriever.write_orbit_netcdf(
-                out_path=out_nc,
-                ds_nh=ds_nh,
-                ds_sh=ds_sh,
-                var_scales={
-                    "retrieved_precip_mean": 0.005,
-                    "retrieved_precip_q70":  0.005,
-                    "retrieved_precip_q75":  0.005,
-                    "retrieved_precip_q80":  0.005,
-                },
-                default_scale=0.005,
-            )
-        # ----------------- convert gridded WGS retrievals back to L2 swath -------------
-        try:
-            retrieved_names = list(ds_nh.data_vars) + list(ds_sh.data_vars)
-            retrieved_names = sorted(set(retrieved_names))
+                l2_out_path = out_nc.with_name(f"{orbit_tag}_L2.nc")
+                print(f"[DEBUG] Attaching retrievals back to L2: {l2_out_path}", flush=True)
 
-            l2_writer = AVHRRBackToL2(
-                retrieved_var_names=retrieved_names,
-            )
+                l2_writer.attach_to_orbit(
+                    raw_orbit_path=raw_orbit_path,
+                    ds_nh=ds_nh,
+                    ds_sh=ds_sh,
+                    out_path=l2_out_path,
+                )
 
-            # e.g. same dir as out_nc, different suffix
-            l2_out_path = out_nc.with_name(f"{orbit_tag}_L2.nc")
-
-            l2_writer.attach_to_orbit(
-                raw_orbit_path=raw_orbit_path,
-                ds_nh=ds_nh,
-                ds_sh=ds_sh,
-                out_path=l2_out_path,
-            )
-
-        except Exception as e_l2:
-            print(f"[WARN] Could not attach retrievals to L2 grid for {orbit_tag}: {e_l2}", flush=True)
+            except Exception as e_l2:
+                print(f"[WARN] Could not attach retrievals to L2 grid for {orbit_tag}: {repr(e_l2)}", flush=True)
 
     except Exception as e:
-        print(f"❌ [CPU] Error in finalize for {orbit_tag}: {e}", flush=True)
+        print(f"❌ [CPU] Error in finalize for {orbit_tag}: {repr(e)}", flush=True)
         if out_nc.exists():
             try:
                 out_nc.unlink()
             except Exception:
                 pass
     finally:
+        try:
+            del ds_nh
+        except Exception:
+            pass
+        try:
+            del ds_sh
+        except Exception:
+            pass
         gc.collect()
-
 
 # ------------------------------------------------------------
 # Per-orbit GPU part (Stage-1 + Stage-2)
@@ -530,7 +529,7 @@ def main():
         orbit_tag = extract_orbit_tag(avh_file)
         out_nc = BASE_OUT / f"{orbit_tag}_retrieved_{OUT_GRID}.nc"
 
-        print(f"[Rank {global_rank}] >>> Orbit {orbit_tag}", flush=True)
+        # print(f"[Rank {global_rank}] >>> Orbit {orbit_tag}", flush=True)
 
         try:
             # ---------- GPU part (Stage-1 + Stage-2) ---------- #
@@ -583,22 +582,49 @@ def main():
                 futures = list(not_done)
 
         except MissingMERRA2File as e:
-            print(f"[Rank {global_rank}] [SKIP] {orbit_tag}: {e}", file=sys.stderr, flush=True)
+            print(f"[Rank {global_rank}] [SKIP:MERRA2] {orbit_tag}: {e}", file=sys.stderr, flush=True)
             if out_nc.exists():
                 try:
                     out_nc.unlink()
                 except Exception:
                     pass
+            continue
 
+        except KeyError as e:
+            print(f"[Rank {global_rank}] [SKIP:SCHEMA] {orbit_tag}: {e}", flush=True)
+            if out_nc.exists():
+                try:
+                    out_nc.unlink()
+                except Exception:
+                    pass
+            continue
+
+        except ValueError as e:
+            msg = str(e)
+            if "No valid pixels found" in msg or "multiple wrap-arounds detected" in msg:
+                print(f"[Rank {global_rank}] [SKIP:BAD_ORBIT] {orbit_tag}: {e}", flush=True)
+                if out_nc.exists():
+                    try:
+                        out_nc.unlink()
+                    except Exception:
+                        pass
+                continue
+            print(f"[Rank {global_rank}] ❌ Error on orbit {orbit_tag}: {repr(e)}", flush=True)
+            if out_nc.exists():
+                try:
+                    out_nc.unlink()
+                except Exception:
+                    pass
             continue
 
         except Exception as e:
-            print(f"[Rank {global_rank}] ❌ Error on orbit {orbit_tag}: {e}", flush=True)
+            print(f"[Rank {global_rank}] ❌ Error on orbit {orbit_tag}: {repr(e)}", flush=True)
             if out_nc.exists():
                 try:
                     out_nc.unlink()
                 except Exception:
                     pass
+            continue
 
         # ---------- progress logging ---------- #
         completed = (pbar.n + 1) if pbar is not None else None

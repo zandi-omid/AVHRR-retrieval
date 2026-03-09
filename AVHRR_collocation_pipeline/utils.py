@@ -9,7 +9,9 @@ import random
 from typing import Union, List, Dict, Any, Optional
 import xarray as xr
 import datetime
-
+from pathlib import Path
+import os
+import uuid
 
 
 # functions
@@ -593,3 +595,22 @@ def AVHRR_datetime_NC_files(AVHRR_file):
         end_dt = end_dt + datetime.timedelta(days=1)
 
     return st_dt, end_dt, yr
+
+def safe_to_netcdf(ds: xr.Dataset, out_path: Path, *, encoding=None, format="NETCDF4") -> Path:
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    tmp_path = out_path.with_name(f".{out_path.name}.{uuid.uuid4().hex}.tmp")
+
+    try:
+        ds.to_netcdf(tmp_path, format=format, encoding=encoding or {})
+        os.replace(tmp_path, out_path)   # atomic rename on same filesystem
+    except Exception:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except Exception:
+            pass
+        raise
+
+    return out_path
