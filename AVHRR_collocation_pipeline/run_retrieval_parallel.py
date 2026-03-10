@@ -156,6 +156,33 @@ def _attach_global_attrs(
     })
 
     return ds
+
+def file_barrier(barrier_dir: Path, rank: int, world_size: int, timeout_s: int = 3600, poll_s: float = 2.0):
+    """
+    Simple shared-filesystem barrier for Slurm ranks.
+    Each rank writes a marker file, then waits until all ranks have written theirs.
+    """
+    barrier_dir.mkdir(parents=True, exist_ok=True)
+
+    my_marker = barrier_dir / f"rank_{rank:04d}.done"
+    my_marker.write_text("done\n")
+
+    print(f"[Rank {rank}] Reached barrier. Wrote {my_marker}", flush=True)
+
+    t0 = time.time()
+    while True:
+        markers = list(barrier_dir.glob("rank_*.done"))
+        if len(markers) >= world_size:
+            print(f"[Rank {rank}] Barrier satisfied: {len(markers)}/{world_size} ranks done.", flush=True)
+            return
+
+        if time.time() - t0 > timeout_s:
+            raise TimeoutError(
+                f"[Rank {rank}] Timed out waiting at barrier. "
+                f"Found {len(markers)}/{world_size} marker files in {barrier_dir}"
+            )
+
+        time.sleep(poll_s)
 # ------------------------------------------------------------
 # CPU finalization: reprojection + TB11-mask + NetCDF write
 # runs inside CPU thread pool
@@ -435,6 +462,19 @@ def main():
 
     my_files = all_files[global_rank::world_size]
 
+    barrier_dir = BASE_OUT / "_rank_barrier"
+
+    if global_rank == 0 and barrier_dir.exists():
+        for p in barrier_dir.glob("rank_*.done"):
+            try:
+                p.unlink()
+            except Exception as e:
+                print(f"[Rank 0] Warning: could not remove old barrier file {p}: {e}", flush=True)
+
+    # Small pause so rank 0 gets a chance to clean before others arrive
+    if world_size > 1:
+        time.sleep(2)    
+
     print(
         f"[Rank {global_rank}/{world_size}] node={node_name}, "
         f"total_files={len(all_files)}, my_files={len(my_files)}",
@@ -670,8 +710,24 @@ def main():
 
     # ---------- wait for CPU jobs ---------- #
     if futures:
-        wait(futures)
+        done, _ = wait(futures)
+        for fut in done:
+            try:
+                fut.result()   # re-raise any exception from worker thread
+            except Exception as e:
+                print(f"[Rank {global_rank}] ❌ Worker future failed at shutdown: {repr(e)}", flush=True)
+                raise
+
     writer_pool.shutdown(wait=True)
+
+        # ---------- cross-rank barrier ---------- #
+    file_barrier(
+        barrier_dir=barrier_dir,
+        rank=global_rank,
+        world_size=world_size,
+        timeout_s=7200,
+        poll_s=2.0,
+    )
 
     if 'pbar' in locals() and pbar is not None:
         pbar.close()

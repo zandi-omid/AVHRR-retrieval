@@ -354,7 +354,7 @@ def correct_dataset_vectorized(
 
     # Determine season using orbit_name
     year, doy = extract_year_and_doy(orbit_name)
-    # leap-year adjustment consistent with your friend's logic
+    # leap-year adjustment
     is_leap = (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0)
     if is_leap and doy > 59:
         doy -= 1
