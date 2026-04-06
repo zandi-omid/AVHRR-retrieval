@@ -7,9 +7,9 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem-per-cpu=8G
 #SBATCH --time=48:00:00
-#SBATCH --job-name=2019missing
-#SBATCH --output=logs/retry_2019_missing_%j.out
-#SBATCH --error=logs/retry_2019_missing_%j.err
+#SBATCH --job-name=2010
+#SBATCH --output=logs/2010_%j.out
+#SBATCH --error=logs/2010_%j.err
 #SBATCH --exclusive
 
 export SLURM_NO_AUDIT=1
@@ -36,7 +36,7 @@ export OPENBLAS_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 
 export REPROJ_THREADS=1
-export MAX_PENDING_REPROJ=2
+export MAX_PENDING_REPROJ=1
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export NCCL_ASYNC_ERROR_HANDLING=1

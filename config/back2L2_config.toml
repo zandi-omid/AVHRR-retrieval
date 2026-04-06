@@ -1,0 +1,8 @@
+[paths]
+retrieved_dir = "/xdisk/behrangi/omidzandi/retrieved_maps/2018_"
+raw_orbit_dirs = ["/xdisk/behrangi/omidzandi/DL_Simon_chips/input_raw_data/AVHRR/2018new"]
+out_dir = "/xdisk/behrangi/omidzandi/retrieved_maps/2018_L2"
+log_csv = "/xdisk/behrangi/omidzandi/retrieved_maps/2018_L2_backtoL2_log.csv"
+
+[run]
+n_workers = 28

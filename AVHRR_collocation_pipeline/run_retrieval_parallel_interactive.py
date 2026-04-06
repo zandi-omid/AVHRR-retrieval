@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import random
 import numpy as np
 from pathlib import Path
 import os
@@ -35,69 +34,115 @@ from AVHRR_collocation_pipeline.retrievers.limb_correction.lut_loader import loa
 limb_assets = load_limbcorr_assets("/xdisk/behrangi/omidzandi/AVHRR-retrieval/AVHRR_collocation_pipeline/retrievers/limb_correction")
 
 # ------------------------------------------------------------
-# Parse config
+# Parse config / local debug override
 # ------------------------------------------------------------
-parser = argparse.ArgumentParser()
-parser.add_argument("--config", type=str, default="config/retrieve_config.toml")
-parser.add_argument(
-    "--stage1-only",
-    action="store_true",
-    help="Run only (collocation + reprojection). Skip retrieval + writing.",
-)
-args = parser.parse_args()
-cfg = toml.load(args.config)
+DEBUG_LOCAL = True   # <<< set True for VS Code / F5 interactive debugging
+DEBUG_STAGE1_ONLY = False
 
-STAGE1_ONLY = args.stage1_only
-# ------------------------------------------------------------
-# CONFIG
-# ------------------------------------------------------------
-AVHRR_FOLDERS = cfg["paths"]["avhrr_dirs"]
-MERRA2_DIR     = cfg["paths"]["merra2_dir"]
-AUTOSNOW_DIR   = cfg["paths"]["autosnow_dir"]
+# Use this folder for your 6-orbit debugging
+DEBUG_AVHRR_FOLDERS = [
+    "/xdisk/behrangi/omidzandi/DL_Simon_chips/input_raw_data/AVHRR/debug_retry_2019_6orbits"
+]
 
-BASE_OUT = Path(cfg["paths"]["out_dir"])
+DEBUG_OUT_DIR = "/xdisk/behrangi/omidzandi/retrieved_maps/debug_retry_2019_6orbits"
+DEBUG_MERRA2_DIR = "/xdisk/behrangi/omidzandi/DL_Simon_chips/input_raw_data/MERRA2/merra2_archive_19800101_20250831"
+DEBUG_AUTOSNOW_DIR = "/xdisk/behrangi/omidzandi/DL_Simon_chips/input_raw_data/AutoSnow/autosnow_in_geotif"
+
+DEBUG_COLLOC_POLAR_DIR = ""
+
+DEBUG_GRID_RES = 0.25
+DEBUG_LAT_THRESH_NH = 45.0
+DEBUG_LAT_THRESH_SH = -45.0
+DEBUG_LAT_TS_NH = 70.0
+DEBUG_LAT_TS_SH = -71.0
+
+DEBUG_CKPT_PATH = "/xdisk/behrangi/omidzandi/DL_Simon_codes/avhrr_retrievals/checkpoints/AVHRR_efficient_net_v2_pt_1_45_poleward_SH_ERA5_multi_node_keep_all_fp32-v1.ckpt"
+DEBUG_TILE_SIZE = 1536
+DEBUG_OVERLAP = 64
+
+DEBUG_AVH_VARS = ["cloud_probability", "temp_11_0um_nom", "temp_12_0um_nom"]
+DEBUG_MERRA2_VARS = ["TQV", "T2M"]
+DEBUG_INPUT_VARS = ["cloud_probability", "temp_11_0um_nom", "temp_12_0um_nom", "TQV", "T2M", "AutoSnow"]
+
+DEBUG_DO_LIMB_CORRECTION = True
+
+DEBUG_OUT_GRID = "wgs"
+DEBUG_ENABLE_WGS = False
+DEBUG_WRITE_BACK_TO_L2 = True
+
+DEBUG_WRITE_VARS_NH = ["retrieved_precip_q80"]
+DEBUG_WRITE_VARS_SH = ["retrieved_precip_q70"]
+
+DEBUG_RENAME_VARS_NH = {"retrieved_precip_q80": "precipitation"}
+DEBUG_RENAME_VARS_SH = {"retrieved_precip_q70": "precipitation"}
+
+# Optional: only debug these orbit tags with extra prints
+# DEBUG_ORBITS = {
+#     "clavrx_NSS.GHRR.M1.D19351.S1545.E1640.B3760506.SV.hirs_avhrr_fusion.level2",
+#     "clavrx_NSS.GHRR.NP.D19146.S1616.E1802.B5306667.GC.hirs_avhrr_fusion.level2",
+#     "clavrx_NSS.GHRR.M1.D19358.S0043.E0132.B3769696.MM.hirs_avhrr_fusion.level2",
+#     "clavrx_NSS.GHRR.NP.D19149.S1721.E1907.B5310910.GC.hirs_avhrr_fusion.level2",
+#     "clavrx_NSS.GHRR.M1.D19354.S2039.E2130.B3765151.MM.hirs_avhrr_fusion.level2",
+#     "clavrx_NSS.GHRR.NP.D19148.S1054.E1225.B5309192.SV.hirs_avhrr_fusion.level2",
+# }
+
+DEBUG_ORBITS = {
+    "clavrx_NSS.GHRR.M1.D19354.S2039.E2130.B3765151.MM.hirs_avhrr_fusion.level2",
+}
+
+def dprint(orbit_tag: str, msg: str) -> None:
+    if orbit_tag in DEBUG_ORBITS:
+        print(f"[DEBUG:{orbit_tag}] {msg}", flush=True)
+
+
+print("=== DEBUG_LOCAL=True: using hardcoded config ===", flush=True)
+
+STAGE1_ONLY = DEBUG_STAGE1_ONLY
+
+AVHRR_FOLDERS = DEBUG_AVHRR_FOLDERS
+MERRA2_DIR = DEBUG_MERRA2_DIR
+AUTOSNOW_DIR = DEBUG_AUTOSNOW_DIR
+
+BASE_OUT = Path(DEBUG_OUT_DIR)
 BASE_OUT.mkdir(parents=True, exist_ok=True)
 
-colloc_dir = cfg["paths"].get("collocated_polar_dir", None)
-COLLOC_POLAR_DIR = Path(colloc_dir) if colloc_dir else None
+COLLOC_POLAR_DIR = Path(DEBUG_COLLOC_POLAR_DIR) if DEBUG_COLLOC_POLAR_DIR else None
 
-GRID_RES     = float(cfg["grid"]["resolution_deg"])
-LAT_THRESH_NH = float(cfg["grid"]["lat_thresh_nh"])
-LAT_THRESH_SH = float(cfg["grid"]["lat_thresh_sh"])
-LAT_TS_NH     = float(cfg["grid"]["lat_ts_nh"])
-LAT_TS_SH     = float(cfg["grid"]["lat_ts_sh"])
+GRID_RES = float(DEBUG_GRID_RES)
+LAT_THRESH_NH = float(DEBUG_LAT_THRESH_NH)
+LAT_THRESH_SH = float(DEBUG_LAT_THRESH_SH)
+LAT_TS_NH = float(DEBUG_LAT_TS_NH)
+LAT_TS_SH = float(DEBUG_LAT_TS_SH)
 
-CKPT_PATH  = cfg["DL"]["checkpoint"]
-TILE_SIZE  = int(cfg["DL"]["tile_size"])
-OVERLAP    = int(cfg["DL"]["overlap"])
+CKPT_PATH = DEBUG_CKPT_PATH
+TILE_SIZE = int(DEBUG_TILE_SIZE)
+OVERLAP = int(DEBUG_OVERLAP)
 
-AVH_VARS      = cfg["input_vars"]["avh_vars"]
-MERRA2_VARS   = cfg["input_vars"]["merra2_vars"]
-INPUT_VARS    = cfg["input_vars"]["dl_inputs"]
+AVH_VARS = DEBUG_AVH_VARS
+MERRA2_VARS = DEBUG_MERRA2_VARS
+INPUT_VARS = DEBUG_INPUT_VARS
 
-DO_LIMB_CORRECTION = cfg.get("limb_correction", {}).get("do_limb_correction", False)
+DO_LIMB_CORRECTION = bool(DEBUG_DO_LIMB_CORRECTION)
 
-OUT_GRID = cfg["output"]["grid"].lower()  # "wgs" or "polar"
+OUT_GRID = DEBUG_OUT_GRID.lower()
 if OUT_GRID not in ("wgs", "polar"):
-    raise ValueError(f"output.grid must be 'wgs' or 'polar', got: {OUT_GRID!r}")
+    raise ValueError(f"DEBUG_OUT_GRID must be 'wgs' or 'polar', got: {OUT_GRID!r}")
 
-ENABLE_WGS = bool(cfg["output"].get("enable_wgs_output", True))
+ENABLE_WGS = bool(DEBUG_ENABLE_WGS)
 
-OUT_CFG = cfg.get("output", {})
+WRITE_VARS_NH = DEBUG_WRITE_VARS_NH
+WRITE_VARS_SH = DEBUG_WRITE_VARS_SH
+RENAME_VARS_NH = DEBUG_RENAME_VARS_NH
+RENAME_VARS_SH = DEBUG_RENAME_VARS_SH
 
-WRITE_VARS_NH = OUT_CFG.get("write_vars_nh", None)
-WRITE_VARS_SH = OUT_CFG.get("write_vars_sh", None)
-
-RENAME_VARS_NH = OUT_CFG.get("rename_vars_nh", {}) or {}
-RENAME_VARS_SH = OUT_CFG.get("rename_vars_sh", {}) or {}
-
-# empty list → write all
 if isinstance(WRITE_VARS_NH, list) and len(WRITE_VARS_NH) == 0:
     WRITE_VARS_NH = None
 if isinstance(WRITE_VARS_SH, list) and len(WRITE_VARS_SH) == 0:
     WRITE_VARS_SH = None
 
-WRITE_BACK_TO_L2 = bool(cfg.get("output", {}).get("write_back_to_l2", True))
+WRITE_BACK_TO_L2 = bool(DEBUG_WRITE_BACK_TO_L2)
+
+
 # ------------------------------------------------------------
 # Small helpers
 # ------------------------------------------------------------
@@ -111,6 +156,11 @@ def list_avhrr_files(folders: list[str]) -> list[Path]:
 
 def extract_orbit_tag(avh_file: Path) -> str:
     return avh_file.stem
+
+def filter_files_by_orbit_tags(files: list[Path], orbit_tags: set[str]) -> list[Path]:
+    if not orbit_tags:
+        return files
+    return [f for f in files if extract_orbit_tag(f) in orbit_tags]
 
 def _filter_and_rename(ds, keep, rename):
     rename = rename or {}
@@ -157,7 +207,6 @@ def _attach_global_attrs(
     })
 
     return ds
-
 # ------------------------------------------------------------
 # CPU finalization: reprojection + TB11-mask + NetCDF write
 # runs inside CPU thread pool
@@ -426,19 +475,28 @@ def main():
 
     # ---------- list all AVHRR orbits ---------- #
     all_files = list_avhrr_files(AVHRR_FOLDERS)
+
+    if DEBUG_LOCAL and DEBUG_ORBITS:
+        all_files = filter_files_by_orbit_tags(all_files, DEBUG_ORBITS)
+        print(f"DEBUG_LOCAL: filtering to DEBUG_ORBITS -> {len(all_files)} file(s)", flush=True)
+        for f in all_files:
+            print(f"DEBUG_LOCAL selected: {f}", flush=True)
+
     if not all_files:
         print("No AVHRR .nc files found.")
         return
-    
-    random.seed(42)
-    random.shuffle(all_files)
 
     # ---------- multi-rank splitting (SLURM) ---------- #
-    global_rank = int(os.environ.get("SLURM_PROCID", 0))
-    world_size  = int(os.environ.get("SLURM_NTASKS", 1))
-    node_name   = socket.gethostname()
-
-    my_files = all_files[global_rank::world_size]
+    if DEBUG_LOCAL:
+        global_rank = 0
+        world_size = 1
+        node_name = socket.gethostname()
+        my_files = all_files
+    else:
+        global_rank = int(os.environ.get("SLURM_PROCID", 0))
+        world_size  = int(os.environ.get("SLURM_NTASKS", 1))
+        node_name   = socket.gethostname()
+        my_files = all_files[global_rank::world_size]
 
     print(
         f"[Rank {global_rank}/{world_size}] node={node_name}, "
@@ -470,7 +528,11 @@ def main():
 
     # ---------- device / model ---------- #
     n_gpus = torch.cuda.device_count()
-    local_rank = int(os.environ.get("SLURM_LOCALID", global_rank % max(1, max(n_gpus, 1))))
+
+    if DEBUG_LOCAL:
+        local_rank = 0
+    else:
+        local_rank = int(os.environ.get("SLURM_LOCALID", global_rank % max(1, max(n_gpus, 1))))
 
     if torch.cuda.is_available() and n_gpus > 0:
         device = torch.device(f"cuda:{local_rank}")
@@ -511,14 +573,19 @@ def main():
     )
 
     # ---------- CPU thread pool for finalization ---------- #
-    cpus_per_task = int(os.environ.get("SLURM_CPUS_PER_TASK", "4"))
-    env_reproj = os.environ.get("REPROJ_THREADS", "").strip()
-    if env_reproj:
-        reproj_threads = int(env_reproj)
+    if DEBUG_LOCAL:
+        cpus_per_task = 1
+        reproj_threads = 1
+        max_pending = 1
     else:
-        reproj_threads = max(1, cpus_per_task - 1)
+        cpus_per_task = int(os.environ.get("SLURM_CPUS_PER_TASK", "4"))
+        env_reproj = os.environ.get("REPROJ_THREADS", "").strip()
+        if env_reproj:
+            reproj_threads = int(env_reproj)
+        else:
+            reproj_threads = max(1, cpus_per_task - 1)
 
-    max_pending = int(os.environ.get("MAX_PENDING_REPROJ", "4"))
+        max_pending = int(os.environ.get("MAX_PENDING_REPROJ", "4"))
 
     print(
         f"[Rank {global_rank}] Using {reproj_threads} CPU threads + MAX_PENDING_REPROJ={max_pending}",
@@ -530,7 +597,7 @@ def main():
 
     start_time = time.time()
 
-    for completed, avh_file in enumerate(my_files, start=1):
+    for avh_file in my_files:
         orbit_tag = extract_orbit_tag(avh_file)
         out_nc = BASE_OUT / f"{orbit_tag}_retrieved_{OUT_GRID}.nc"
 
@@ -547,49 +614,44 @@ def main():
                 stage1_only=STAGE1_ONLY,
             )
 
-
             if STAGE1_ONLY:
-                pass
-            else:
-                fut = writer_pool.submit(
-                    cpu_finalize_orbit,
-                    orbit_tag=gpu_out["orbit_tag"],
-                    raw_orbit_path=avh_file,
-                    out_nc=out_nc,
-                    OUT_GRID=OUT_GRID,
-                    preds_nh=gpu_out["preds_nh"],
-                    preds_sh=gpu_out["preds_sh"],
-                    xvec_nh=gpu_out["xvec_nh"],
-                    yvec_nh=gpu_out["yvec_nh"],
-                    xvec_sh=gpu_out["xvec_sh"],
-                    yvec_sh=gpu_out["yvec_sh"],
-                    tb11_wgs=gpu_out["tb11_wgs"],
-                    x_vec_global=gpu_out["x_vec_global"],
-                    y_vec_global=gpu_out["y_vec_global"],
-                    retriever=retriever,
-                    write_vars_nh=WRITE_VARS_NH,
-                    write_vars_sh=WRITE_VARS_SH,
-                    rename_vars_nh=RENAME_VARS_NH,
-                    rename_vars_sh=RENAME_VARS_SH,
-                )
-                futures.append(fut)
+                # Stage-1 done; skip GPU retrieval + CPU finalization
+                continue
 
-                del gpu_out
-                gc.collect()
-                if device.type == "cuda":
-                    torch.cuda.empty_cache()
+            # ---------- CPU part: submit to threadpool ---------- #
+            fut = writer_pool.submit(
+                cpu_finalize_orbit,
+                orbit_tag=gpu_out["orbit_tag"],
+                raw_orbit_path=avh_file,
+                out_nc=out_nc,
+                OUT_GRID=OUT_GRID,
+                preds_nh=gpu_out["preds_nh"],
+                preds_sh=gpu_out["preds_sh"],
+                xvec_nh=gpu_out["xvec_nh"],
+                yvec_nh=gpu_out["yvec_nh"],
+                xvec_sh=gpu_out["xvec_sh"],
+                yvec_sh=gpu_out["yvec_sh"],
+                tb11_wgs=gpu_out["tb11_wgs"],
+                x_vec_global=gpu_out["x_vec_global"],
+                y_vec_global=gpu_out["y_vec_global"],
+                retriever=retriever,
+                write_vars_nh=WRITE_VARS_NH,
+                write_vars_sh=WRITE_VARS_SH,
+                rename_vars_nh=RENAME_VARS_NH,
+                rename_vars_sh=RENAME_VARS_SH,
+            )
+            futures.append(fut)
 
-                if len(futures) >= max_pending:
-                    done, not_done = wait(futures, return_when=FIRST_COMPLETED)
+            # Drop references from main thread (thread has its own copies)
+            del gpu_out
+            gc.collect()
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
 
-                    for fut_done in done:
-                        try:
-                            fut_done.result()
-                        except Exception as e:
-                            print(f"[Rank {global_rank}] ❌ Worker future failed during throttling: {repr(e)}", flush=True)
-                            raise
-
-                    futures = list(not_done)
+            # throttle number of pending CPU jobs
+            if len(futures) >= max_pending:
+                done, not_done = wait(futures, return_when=FIRST_COMPLETED)
+                futures = list(not_done)
 
         except MissingMERRA2File as e:
             print(f"[Rank {global_rank}] [SKIP:MERRA2] {orbit_tag}: {e}", file=sys.stderr, flush=True)
@@ -598,6 +660,7 @@ def main():
                     out_nc.unlink()
                 except Exception:
                     pass
+            continue
 
         except KeyError as e:
             print(f"[Rank {global_rank}] [SKIP:SCHEMA] {orbit_tag}: {e}", flush=True)
@@ -606,6 +669,7 @@ def main():
                     out_nc.unlink()
                 except Exception:
                     pass
+            continue
 
         except ValueError as e:
             msg = str(e)
@@ -616,13 +680,15 @@ def main():
                         out_nc.unlink()
                     except Exception:
                         pass
-            else:
-                print(f"[Rank {global_rank}] ❌ Error on orbit {orbit_tag}: {repr(e)}", flush=True)
-                if out_nc.exists():
-                    try:
-                        out_nc.unlink()
-                    except Exception:
-                        pass
+                continue
+            print(f"[Rank {global_rank}] ❌ Error on orbit {orbit_tag}: {repr(e)}", flush=True)
+            if out_nc.exists():
+                try:
+                    out_nc.unlink()
+                except Exception:
+                    pass
+            continue
+
         except Exception as e:
             print(f"[Rank {global_rank}] ❌ Error on orbit {orbit_tag}: {repr(e)}", flush=True)
             if out_nc.exists():
@@ -630,17 +696,23 @@ def main():
                     out_nc.unlink()
                 except Exception:
                     pass
+            continue
 
         # ---------- progress logging ---------- #
+        completed = (pbar.n + 1) if pbar is not None else None
         total = len(my_files)
+
+        # Update tqdm (if enabled for this rank)
+        if pbar is not None:
+            pbar.update(1)
+
+        # Fallback for ranks without tqdm
+        if completed is None:
+            completed = my_files.index(avh_file) + 1
 
         progress = completed / total
         elapsed = time.time() - start_time
         its_per_sec = completed / elapsed if elapsed > 0 else 0.0
-
-        if pbar is not None:
-            pbar.update(1)
-            pbar.set_postfix({"it/s": f"{its_per_sec:.2f}"})
 
         # --- ETA computation (per rank) ---
         if its_per_sec > 0.0:
@@ -670,17 +742,10 @@ def main():
 
     # ---------- wait for CPU jobs ---------- #
     if futures:
-        done, _ = wait(futures)
-        for fut in done:
-            try:
-                fut.result()   # re-raise any exception from worker thread
-            except Exception as e:
-                print(f"[Rank {global_rank}] ❌ Worker future failed at shutdown: {repr(e)}", flush=True)
-                raise
-
+        wait(futures)
     writer_pool.shutdown(wait=True)
 
-    if pbar is not None:
+    if 'pbar' in locals() and pbar is not None:
         pbar.close()
     progress_f.close()
 
